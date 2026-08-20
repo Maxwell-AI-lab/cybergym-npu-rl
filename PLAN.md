@@ -61,8 +61,8 @@
 │  8 Train 节点 │ ───────────────> │ 4 Rollout  │   │ CyberGym Server  │
 │  (Megatron)  │   weight sync    │ (vLLM)     │   │ (FastAPI :8666)  │
 │  GRPO update │                  │            │──>│                  │
-└──────────────┘                  └─────┬──────┘   │ Docker × 20     │
-                                        │          │ (10 vul + 10 fix)│
+└──────────────┘                  └─────┬──────┘   │ Docker × 18     │
+                                        │          │ (9 vul + 9 fix) │
                               reward HTTP POST      │                  │
                               /submit-vul           └────────┬─────────┘
                                         │                    │
@@ -480,7 +480,7 @@ bash configs/train_cybergym.sh
 
 # 关键参数
 REWARD_FN_PATH="/data/z00666713/deepseek0715/cybergym_integration/verl_integration/cybergym_reward.py"
-CYBERGYM_SERVER_URL="http://<x86-ip>:8666"
+CYBERGYM_SERVER_URL="http://192.168.0.100:8666"
 train_prompt_bsz=16
 n_resp_per_prompt=4
 max_prompt_length=4096
@@ -511,7 +511,7 @@ max_response_length=4096
 | 参数 | 原值 (GSM8K) | CyberGym | 说明 |
 |------|-------------|----------|------|
 | `exp_name` | `DeepSeek-V4-Flash` | `DeepSeek-V4-Flash-CyberGym` | 实验名 |
-| `train_prompt_bsz` | 32 | 16 | 适配 10 个任务 |
+| `train_prompt_bsz` | 32 | 16 | 适配 9 个任务 |
 | `n_resp_per_prompt` | 8 | 4 | 降低采样数 |
 | `max_prompt_length` | 2048 | 4096 | 漏洞描述较长 |
 | `max_response_length` | 2048 | 4096 | 代码输出需要更多空间 |
@@ -544,21 +544,66 @@ max_response_length=4096
 | Reward 函数 (sync + async) | ✅ | `cybergym_reward.py` |
 | Mock Reward | ✅ | `cybergym_reward_mock.py` |
 | 训练脚本 | ✅ | `train_cybergym.sh` + `train_cybergym_mock.sh` |
-| Parquet 数据 (10 行) | ✅ | 训练集群 `/data/dataset/cybergym/train.parquet` |
+| Parquet 数据 (9 行) | ✅ | 训练集群 `/data/dataset/cybergym/train.parquet` |
 | 数据下载 (描述 + 源码) | ✅ | relay `/data/z00666713/cybergym_data/` |
-| Docker 镜像 (20 个, ~68GB) | ✅ | relay (已 pull, 未导出) |
+| Docker 镜像 (vul 9/9, fix 6/9) | ✅ | x86 server (已部署运行) |
 | x86 部署脚本 | ✅ | `setup_x86.sh` |
 | 工具定义 (多轮用) | ✅ | `cybergym_tools.py` |
 | 三步验证 (reward + parquet + e2e) | ✅ | `scripts/test_*.py` |
 | GitHub 仓库 | ✅ | `Maxwell-AI-lab/cybergym-npu-rl` |
+| **x86 Server 部署** | ✅ | 192.168.0.100:8666 运行中 |
+| **联调测试** | ✅ | 23/23 通过，延迟 0.19s |
+| **网络连通性验证** | ✅ | 训练集群 → x86 直连可达 |
+
+### x86 Server 部署详情（2026-08-20）
+
+**环境**：Ubuntu 24.04, 32C/64GB, vdb 196GB (71% 已用)
+
+**Docker 镜像状态**：
+| 任务 ID | vul 镜像 | fix 镜像 | 备注 |
+|---------|---------|---------|------|
+| arvo:47101 | ✅ | ❌ | fix 拉取超时 |
+| arvo:3938 | ✅ | ✅ | |
+| arvo:24993 | ✅ | ❌ | fix 拉取超时 |
+| arvo:1065 | ✅ | ✅ | |
+| arvo:10400 | ✅ | ❌ | fix 拉取超时 |
+| arvo:368 | ✅ | ✅ | |
+| oss-fuzz:42535201 | ✅ | ✅ | |
+| oss-fuzz:42535468 | ✅ | ✅ | |
+| oss-fuzz:370689421 | ✅ | ✅ | |
+| ~~oss-fuzz:385167047~~ | ❌ | ❌ | 已移除（镜像 71GB 过大） |
+
+**Server 配置**：
+- 端口：8666
+- Rate limit：200 req/60s（每 agent）
+- API Key：`cybergym-030a0cd7-5908-4862-8ab9-91f2bfc7b56d`
+- 数据库：`/data/cybergym/poc.db` (SQLite)
+- 日志：`/data/cybergym/logs/`
+
+**联调测试结果**：
+```
+=== Test 1: Server Connectivity ===  ✓
+=== Test 2: submit-vul (fake PoC) ===  ✓
+=== Test 3: submit-fix (arvo:368) ===  ✓
+=== Test 4: Checksum Verification ===  ✓
+=== Test 5: All Tasks Docker Images ===  ✓ (9/9 vul)
+=== Test 6: Latency Benchmark ===  ✓ (avg 0.19s, 64 submits ~12s)
+=== Test 7: Reward Function End-to-End ===  ✓
+Results: 23/23 passed, 0 failed
+```
+
+**关键发现**：
+- 延迟极低（0.19s/次），Server 不是训练瓶颈
+- arvo:3938 异常：8 字节 `\x00` 输入即 exit=1，可能对任何输入都触发 ASan
+- 3 个 fix 镜像缺失（Docker Hub 连接超时），不影响 vul 验证（+1.0），仅缺少 fix 加分（+0.5）
 
 ### 待完成
 
 | 项目 | 依赖 | 优先级 |
 |------|------|--------|
-| x86 Server 部署 + 联调 | x86 服务器到位 | 高 |
-| 基线评估脚本 + 运行 | x86 Server | 高 |
-| 单轮 GRPO 训练启动 | x86 Server + GSM8K 跑完 | 高 |
+| 基线评估脚本 + 运行 | x86 Server ✅ | 高 |
+| 单轮 GRPO 训练启动 | 基线评估通过 + GSM8K 跑完 | 高 |
+| fix 镜像补充（10400/24993/47101） | Docker Hub 网络改善 | 低 |
 | tool_config.yaml (多轮用) | 单轮验证通过后 | 中 |
-| Reward 并发优化 | 如果验证速度成瓶颈 | 中 |
+| Reward 并发优化 | 如果验证速度成瓶颈 | 中（目前 0.19s 无需优化） |
 | system_prompt.py 和 prepare_data.py 统一 | 多轮升级时 | 低 |

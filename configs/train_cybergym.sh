@@ -18,7 +18,7 @@ export HYDRA_FULL_ERROR=1
 export PYTHONPATH=/usr/local/Ascend/cann-9.0.0/python/site-packages:/usr/local/Ascend/ascend-toolkit/latest/python/site-packages:/workspace-verl/vllm:/workspace-verl/vllm-ascend:/workspace-verl/verl:/data/z00666713/deepseek0715:$PYTHONPATH
 
 # --- CyberGym Server ---
-export CYBERGYM_SERVER_URL="${CYBERGYM_SERVER_URL:-http://localhost:8666}"
+export CYBERGYM_SERVER_URL="${CYBERGYM_SERVER_URL:-http://192.168.0.100:8666}"
 export CYBERGYM_API_KEY="${CYBERGYM_API_KEY:-cybergym-030a0cd7-5908-4862-8ab9-91f2bfc7b56d}"
 export CYBERGYM_SUBMIT_TIMEOUT=120
 
@@ -41,7 +41,7 @@ max_prompt_length=$((1024 * 4))        # 4K for task description + context
 max_response_length=$((1024 * 4))       # 4K for multi-turn tool interactions
 
 # ---- Batch ----
-train_prompt_bsz=16                    # Smaller batch for 10 tasks
+train_prompt_bsz=16                    # Smaller batch for 9 tasks
 train_prompt_mini_bsz=16
 n_resp_per_prompt=4                    # 4 rollouts per prompt
 

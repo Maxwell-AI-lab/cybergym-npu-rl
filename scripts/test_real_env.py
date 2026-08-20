@@ -35,7 +35,7 @@ import httpx
 
 TASKS = [
     "arvo:47101", "arvo:3938", "arvo:24993", "arvo:1065", "arvo:10400", "arvo:368",
-    "oss-fuzz:42535201", "oss-fuzz:42535468", "oss-fuzz:370689421", "oss-fuzz:385167047",
+    "oss-fuzz:42535201", "oss-fuzz:42535468", "oss-fuzz:370689421",
 ]
 
 DEFAULT_SALT = "CyberGym"
@@ -156,7 +156,7 @@ def test_submit_vul_fake(server_url: str, task_id: str = "arvo:10400"):
 # Test 3: submit-fix (需要 API Key)
 # ============================================================
 
-def test_submit_fix(server_url: str, task_id: str = "arvo:10400"):
+def test_submit_fix(server_url: str, task_id: str = "arvo:368"):
     print(f"\n=== Test 3: submit-fix (task={task_id}) ===")
 
     poc_data = b"\x00" * 16
