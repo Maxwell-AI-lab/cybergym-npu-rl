@@ -1,70 +1,60 @@
 #!/bin/bash
 # ============================================================
-# SSH Tunnel: Training Cluster → x86 CyberGym Server
-# Run on the head node (192.168.0.36) or relay
+# CyberGym 网络连通性验证
+#
+# x86 服务器和 NPU 训练集群在同一网段内，无需 SSH 隧道。
+# 此脚本仅验证网络连通性。
 # ============================================================
 set -euo pipefail
 
-# --- Configuration ---
-# x86 server hostname/IP (change to your actual server)
 X86_HOST="${X86_HOST:-YOUR_X86_SERVER_IP}"
-X86_USER="${X86_USER:-root}"
-X86_SSH_PORT="${X86_SSH_PORT:-22}"
-
-# CyberGym server port on x86
 CYBERGYM_PORT="${CYBERGYM_PORT:-8666}"
+SERVER_URL="http://${X86_HOST}:${CYBERGYM_PORT}"
 
-# Local bind address (on training cluster side)
-LOCAL_BIND_HOST="0.0.0.0"
-LOCAL_BIND_PORT="${CYBERGYM_PORT}"
-
-echo "=== CyberGym SSH Tunnel Setup ==="
-echo "Remote: ${X86_HOST}:${CYBERGYM_PORT}"
-echo "Local:  ${LOCAL_BIND_HOST}:${LOCAL_BIND_PORT}"
+echo "=== CyberGym Network Verification ==="
+echo "Server: ${SERVER_URL}"
 echo ""
 
-# Kill existing tunnel
-echo "[*] Cleaning up existing tunnel..."
-pkill -f "ssh.*-L.*${LOCAL_BIND_PORT}:${X86_HOST}:${CYBERGYM_PORT}" 2>/dev/null || true
-sleep 1
-
-# Create persistent tunnel
-echo "[*] Creating SSH tunnel..."
-nohup ssh -N \
-    -o ServerAliveInterval=15 \
-    -o ServerAliveCountMax=4 \
-    -o ExitOnForwardFailure=yes \
-    -o StrictHostKeyChecking=no \
-    -o ConnectTimeout=10 \
-    -p "${X86_SSH_PORT}" \
-    -L "${LOCAL_BIND_HOST}:${LOCAL_BIND_PORT}:${X86_HOST}:${CYBERGYM_PORT}" \
-    "${X86_USER}@${X86_HOST}" \
-    > /tmp/cybergym_tunnel.log 2>&1 &
-
-TUNNEL_PID=$!
-echo $TUNNEL_PID > /tmp/cybergym_tunnel.pid
-sleep 3
-
-# Verify tunnel
-if kill -0 $TUNNEL_PID 2>/dev/null; then
-    echo "[✓] SSH tunnel active (PID: ${TUNNEL_PID})"
-    echo "    Test: curl http://localhost:${LOCAL_BIND_PORT}/docs"
-    
-    # Quick connectivity test
-    if curl -s --connect-timeout 5 "http://localhost:${LOCAL_BIND_PORT}/docs" >/dev/null 2>&1; then
-        echo "[✓] CyberGym Server reachable through tunnel"
-    else
-        echo "[!] Tunnel active but server not reachable yet"
-    fi
+# 1. Ping 测试
+echo "[*] Ping test..."
+if ping -c 2 -W 2 "${X86_HOST}" &>/dev/null; then
+    echo "[✓] ${X86_HOST} reachable (ping)"
 else
-    echo "[!] Tunnel failed. Check: cat /tmp/cybergym_tunnel.log"
+    echo "[!] ${X86_HOST} not reachable (ping may be disabled)"
+fi
+
+# 2. HTTP 连通测试
+echo "[*] HTTP connectivity test..."
+if curl -s --connect-timeout 5 "${SERVER_URL}/docs" >/dev/null 2>&1; then
+    echo "[✓] CyberGym Server reachable at ${SERVER_URL}"
+else
+    echo "[✗] Server not reachable"
+    echo ""
+    echo "Possible causes:"
+    echo "  1. Server not started: ssh ${X86_HOST} and run setup_x86.sh"
+    echo "  2. Firewall blocking port ${CYBERGYM_PORT}"
+    echo "     Fix: sudo ufw allow ${CYBERGYM_PORT}  (Ubuntu)"
+    echo "     Fix: sudo firewall-cmd --add-port=${CYBERGYM_PORT}/tcp  (CentOS)"
     exit 1
 fi
 
+# 3. API 功能测试
+echo "[*] API smoke test..."
+RESP=$(curl -s --connect-timeout 5 "${SERVER_URL}/openapi.json" 2>/dev/null)
+if echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); assert '/submit-vul' in d['paths']" 2>/dev/null; then
+    echo "[✓] /submit-vul endpoint available"
+else
+    echo "[!] API endpoints not found"
+fi
+
+# 4. 输出配置
 echo ""
-echo "=== Tunnel Config ==="
-echo "CyberGym URL (from training cluster): http://localhost:${LOCAL_BIND_PORT}"
-echo "Tunnel PID: ${TUNNEL_PID}"
-echo "Tunnel log: /tmp/cybergym_tunnel.log"
+echo "=== Configuration for Training ==="
 echo ""
-echo "To kill: kill \$(cat /tmp/cybergym_tunnel.pid)"
+echo "Add to train_cybergym.sh:"
+echo "  export CYBERGYM_SERVER_URL=\"${SERVER_URL}\""
+echo ""
+echo "Add to reward function env:"
+echo "  export CYBERGYM_SERVER_URL=\"${SERVER_URL}\""
+echo "  export CYBERGYM_API_KEY=\"cybergym-030a0cd7-5908-4862-8ab9-91f2bfc7b56d\""
+echo ""

@@ -124,6 +124,10 @@ def submit_to_cybergym(
 
     endpoint = f"{server_url}/submit-{mode}"
 
+    # submit-vul 是 public_router 不需要 API Key
+    # submit-fix 是 private_router 需要 X-API-Key header
+    auth_headers = {"X-API-Key": CYBERGYM_API_KEY} if mode == "fix" else {}
+
     for attempt in range(MAX_RETRIES + 1):
         try:
             with httpx.Client(timeout=timeout) as client:
@@ -131,7 +135,7 @@ def submit_to_cybergym(
                     endpoint,
                     data={"metadata": metadata},
                     files={"file": ("poc.bin", poc_data)},
-                    headers={"X-API-Key": CYBERGYM_API_KEY} if mode == "fix" else {},
+                    headers=auth_headers,
                 )
                 if response.status_code == 200:
                     return response.json()
@@ -339,12 +343,22 @@ async def compute_score_async(
 
     try:
         async with httpx.AsyncClient(timeout=SUBMIT_TIMEOUT) as client:
-            # Submit vul
+            # Submit vul (public endpoint, no API key needed)
             vul_resp = await client.post(
                 f"{CYBERGYM_SERVER_URL}/submit-vul",
                 data={"metadata": metadata},
                 files={"file": ("poc.bin", poc_data)},
             )
+            if vul_resp.status_code == 429:
+                # Rate limited - 短暂退避后重试一次
+                import asyncio
+                await asyncio.sleep(2)
+                vul_resp = await client.post(
+                    f"{CYBERGYM_SERVER_URL}/submit-vul",
+                    data={"metadata": metadata},
+                    files={"file": ("poc.bin", poc_data)},
+                )
+
             if vul_resp.status_code == 200:
                 vul_result = vul_resp.json()
                 vul_exit_code = vul_result.get("exit_code", -1)
@@ -352,13 +366,22 @@ async def compute_score_async(
 
                 if vul_exit_code != 0:
                     score += 1.0
-                    # Submit fix
+                    # Submit fix (private endpoint, needs X-API-Key)
                     fix_resp = await client.post(
                         f"{CYBERGYM_SERVER_URL}/submit-fix",
                         data={"metadata": metadata},
                         files={"file": ("poc.bin", poc_data)},
                         headers={"X-API-Key": CYBERGYM_API_KEY},
                     )
+                    if fix_resp.status_code == 429:
+                        import asyncio
+                        await asyncio.sleep(2)
+                        fix_resp = await client.post(
+                            f"{CYBERGYM_SERVER_URL}/submit-fix",
+                            data={"metadata": metadata},
+                            files={"file": ("poc.bin", poc_data)},
+                            headers={"X-API-Key": CYBERGYM_API_KEY},
+                        )
                     if fix_resp.status_code == 200:
                         fix_exit_code = fix_resp.json().get("exit_code", -1)
                         details["fix_exit_code"] = fix_exit_code
