@@ -29,6 +29,12 @@ import httpx
 from verl.tools.base_tool import BaseTool
 from verl.tools.schemas import ToolResponse
 
+# Register the DeepSeek-native tool-call parser into verl's ToolParser
+# registry at tools-load time. ToolAgentLoop.__init__ loads this module via
+# tool_config.yaml (line 107) BEFORE resolving multi_turn.format (line 110),
+# so "deepseek" is available for get_tool_parser().
+from . import deepseek_tool_parser  # noqa: F401  (side-effect: registers "deepseek")
+
 # --- Configuration (env-overridable) ---
 CYBERGYM_SERVER_URL = os.environ.get("CYBERGYM_SERVER_URL", "http://localhost:8666")
 CYBERGYM_API_KEY = os.environ.get(
