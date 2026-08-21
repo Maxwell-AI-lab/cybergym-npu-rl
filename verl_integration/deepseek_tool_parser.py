@@ -95,6 +95,44 @@ class DeepSeekToolParser(ToolParser):
             r"function[^\na-zA-Z]{0,6}\s*([a-z_]+)\s*[。.]?\s*```(?:json)?\s*\n(\{.*?\})\s*\n?```",
             regex.DOTALL,
         )
+        # Dialect 0 (official DSML, injected by the model's own chat template):
+        #   <｜DSML｜tool_calls>
+        #   <｜DSML｜invoke name="read_file">
+        #   <｜DSML｜parameter name="path" string="true">value</｜DSML｜parameter>
+        #   </｜DSML｜invoke></｜DSML｜tool_calls>
+        # DSML markers are plain text (not vocab specials), so they survive
+        # decoding either way. string="false" means the value is JSON.
+        self.dsml_invoke_regex = regex.compile(
+            r"<｜DSML｜invoke name=\"([^\"]+)\"[^>]*>(.*?)</｜DSML｜invoke>",
+            regex.DOTALL,
+        )
+        self.dsml_block_regex = regex.compile(
+            r"<｜DSML｜tool_calls>.*?</｜DSML｜tool_calls>",
+            regex.DOTALL,
+        )
+        self.dsml_param_regex = regex.compile(
+            r"<｜DSML｜parameter name=\"([^\"]+)\"(?: string=\"(true|false)\")?>(.*?)</｜DSML｜parameter>",
+            regex.DOTALL,
+        )
+
+    def _dsml_params_to_json(self, invoke_body: str) -> str:
+        """Convert DSML parameter list to a JSON arguments string."""
+        args: dict = {}
+        for name, is_json, value in self.dsml_param_regex.findall(invoke_body):
+            value = value.strip()
+            if is_json == "false":
+                try:
+                    args[name] = json.loads(value)
+                    continue
+                except Exception:
+                    pass  # fall through as raw string
+            if value.lower() == "true":
+                args[name] = True
+            elif value.lower() == "false":
+                args[name] = False
+            else:
+                args[name] = value
+        return json.dumps(args, ensure_ascii=False)
 
     def _xml_params_to_json(self, params_xml: str) -> str:
         """Convert XML <k>v</k> parameters to a JSON arguments string."""
@@ -123,6 +161,13 @@ class DeepSeekToolParser(ToolParser):
         )
 
         function_calls: list[FunctionCall] = []
+
+        # Dialect 0: official DSML (injected by the chat template itself).
+        for dsml_block in self.dsml_block_regex.findall(raw):
+            for name, body in self.dsml_invoke_regex.findall(dsml_block):
+                function_calls.append(
+                    FunctionCall(name=name.strip(), arguments=self._dsml_params_to_json(body))
+                )
 
         # Dialect 1: native special-token markers.
         if CALLS_BEGIN in raw and CALL_BEGIN in raw:
@@ -154,8 +199,9 @@ class DeepSeekToolParser(ToolParser):
             text = await loop.run_in_executor(None, lambda: self.tokenizer.decode(responses_ids))
             return text, []
 
-        # Content for downstream consumers: strip both dialects + special tokens.
-        no_blocks = self.block_regex.sub("", raw)
+        # Content for downstream consumers: strip all dialects + special tokens.
+        no_blocks = self.dsml_block_regex.sub("", raw)
+        no_blocks = self.block_regex.sub("", no_blocks)
         no_blocks = self.xml_block_regex.sub("", no_blocks)
         content = await loop.run_in_executor(
             None, lambda: self.tokenizer.decode(
