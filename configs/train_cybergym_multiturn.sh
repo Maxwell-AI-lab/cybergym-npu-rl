@@ -64,7 +64,7 @@ max_response_length=4096             # 多轮: LLM生成 + 工具调用 + 工具
 # ---- Batch ----
 train_prompt_bsz=8
 train_prompt_mini_bsz=8
-n_resp_per_prompt=4                  # 多轮更贵，降低采样数
+n_resp_per_prompt=8                  # 8x8=64 必须整除训练NPU数(64)
 
 # ---- 算法 ----
 adv_estimator=grpo
@@ -124,8 +124,8 @@ MULTI_TURN_CONFIG=(
 
 # Agent loop 选择: verl 原生 tool_agent (状态机内置)
 AGENT_LOOP_CONFIG=(
-    agent.default_agent_loop="tool_agent"
-    agent.num_workers=8
+    +agent.default_agent_loop="tool_agent"
+    +agent.num_workers=8
 )
 
 DATA_CONFIG=(
