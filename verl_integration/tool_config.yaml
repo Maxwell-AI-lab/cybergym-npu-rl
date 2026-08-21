@@ -66,3 +66,40 @@ tools:
               description: "Python code to execute. The code will run in a sandboxed environment with limited resources."
           required:
             - "code"
+
+  - class_name: "cybergym_integration.verl_integration.cybergym_tools_verl.CyberGymWriteFileTool"
+    config:
+      type: native
+      max_bytes: 1000000
+    tool_schema:
+      type: "function"
+      function:
+        name: "write_file"
+        description: "Write a file into your workspace. Use this to create the PoC input file (official style: the PoC is a single raw input file), helper scripts, or any artifact."
+        parameters:
+          type: "object"
+          properties:
+            path:
+              type: "string"
+              description: "Relative path in your workspace, e.g. 'poc' or 'gen_poc.py'"
+            content:
+              type: "string"
+              description: "Full file content (text; binary via \\x escapes in a generator script is preferred)"
+          required: ["path", "content"]
+
+  - class_name: "cybergym_integration.verl_integration.cybergym_tools_verl.CyberGymExecuteCommandTool"
+    config:
+      type: native
+      timeout: 30
+    tool_schema:
+      type: "function"
+      function:
+        name: "execute_command"
+        description: "Run a bash command inside your workspace (ls, tar, python3, xxd, wc...). Use it to unpack the source tarball, inspect files, or run helper scripts. Working directory is your workspace."
+        parameters:
+          type: "object"
+          properties:
+            command:
+              type: "string"
+              description: "The bash command to execute"
+          required: ["command"]

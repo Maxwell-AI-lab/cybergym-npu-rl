@@ -81,6 +81,26 @@ def _get_client() -> httpx.AsyncClient:
 # Async core helpers
 # ============================================================================
 
+# Per-trajectory writable workspace (official CyberGym semantics: the agent
+# works in a scratch dir containing task files + its own artifacts).
+AGENT_WS_ROOT = os.environ.get("CYBERGYM_AGENT_WS", "/tmp/agent_ws")
+
+
+def _workspace_for(instance_id: str) -> Path:
+    ws = Path(AGENT_WS_ROOT) / (instance_id or "default")
+    ws.mkdir(parents=True, exist_ok=True)
+    return ws
+
+
+def _safe_ws_path(ws: Path, user_path: str) -> Optional[Path]:
+    """Resolve a user-supplied path inside the workspace, refusing escapes."""
+    p = (ws / user_path).resolve()
+    try:
+        p.relative_to(ws.resolve())
+    except ValueError:
+        return None
+    return p
+
 
 def _compute_checksum(task_id: str, agent_id: str, salt: str = DEFAULT_SALT) -> str:
     return hashlib.sha256(f"{task_id}{agent_id}{salt}".encode()).hexdigest()
@@ -283,6 +303,119 @@ def _format_submission_result(
 
 
 # ============================================================================
+# Tool 4: write_file (official workspace semantics)
+# ============================================================================
+
+
+class CyberGymWriteFileTool(BaseTool):
+    """Write a file into the agent's workspace (official PoC-as-file flow)."""
+
+    def __init__(self, config: dict, tool_schema=None):
+        super().__init__(config, tool_schema)
+        self.max_bytes = int(config.get("max_bytes", 1_000_000))
+
+    async def create(self, instance_id: Optional[str] = None, **kwargs) -> tuple[str, ToolResponse]:
+        if instance_id is None:
+            instance_id = f"ws_{uuid.uuid4().hex[:10]}"
+        return instance_id, ToolResponse(text="")
+
+    async def execute(
+        self, instance_id: str, parameters: dict[str, Any], **kwargs
+    ) -> tuple[ToolResponse, float, dict]:
+        path = parameters.get("path", "")
+        content = parameters.get("content", "")
+        if not path:
+            return ToolResponse(text="Error: 'path' parameter is required"), 0.0, {"error": "missing_path"}
+
+        ws = _workspace_for(instance_id)
+        target = _safe_ws_path(ws, path)
+        if target is None:
+            return ToolResponse(text=f"Error: path escapes workspace: {path}"), 0.0, {"error": "escape"}
+
+        def _write():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            data = content.encode("utf-8")
+            if len(data) > self.max_bytes:
+                raise ValueError(f"content too large ({len(data)} > {self.max_bytes} bytes)")
+            target.write_bytes(data)
+            return len(data)
+
+        try:
+            n = await asyncio.to_thread(_write)
+            return ToolResponse(text=f"Wrote {n} bytes to {path}"), 0.0, {"tool": "write_file", "bytes": n}
+        except Exception as e:
+            return ToolResponse(text=f"Error writing file: {e}"), 0.0, {"error": str(e)}
+
+    async def calc_reward(self, instance_id: str, **kwargs) -> float:
+        return 0.0
+
+    async def release(self, instance_id: str, **kwargs) -> None:
+        pass
+
+
+# ============================================================================
+# Tool 5: execute_command (official shell semantics, sandboxed to workspace)
+# ============================================================================
+
+
+class CyberGymExecuteCommandTool(BaseTool):
+    """Run a bash command in the agent workspace (ls / tar / python / xxd...).
+
+    Official agents work via shell; this is the RL-friendly equivalent:
+    cwd is the per-trajectory workspace, timeout-capped, output truncated.
+    """
+
+    def __init__(self, config: dict, tool_schema=None):
+        super().__init__(config, tool_schema)
+        self.timeout = float(config.get("timeout", 30))
+
+    async def create(self, instance_id: Optional[str] = None, **kwargs) -> tuple[str, ToolResponse]:
+        if instance_id is None:
+            instance_id = f"sh_{uuid.uuid4().hex[:10]}"
+        return instance_id, ToolResponse(text="")
+
+    async def execute(
+        self, instance_id: str, parameters: dict[str, Any], **kwargs
+    ) -> tuple[ToolResponse, float, dict]:
+        command = parameters.get("command", "")
+        if not command:
+            return ToolResponse(text="Error: 'command' parameter is required"), 0.0, {"error": "missing_command"}
+
+        ws = _workspace_for(instance_id)
+
+        async def _run() -> str:
+            proc = await asyncio.create_subprocess_exec(
+                "/bin/bash", "-c", command,
+                cwd=str(ws),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+                timeout=None,
+            )
+            try:
+                out, _ = await asyncio.wait_for(proc.communicate(), timeout=self.timeout)
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
+                return f"(command timed out after {self.timeout}s)"
+            text = out.decode("utf-8", errors="replace") or "(no output)"
+            if len(text) > 6000:
+                text = text[:6000] + f"\n... [truncated, {len(text)} total chars]"
+            return f"[exit code: {proc.returncode}]\n{text}"
+
+        try:
+            result = await _run()
+            return ToolResponse(text=result), 0.0, {"tool": "execute_command", "success": True}
+        except Exception as e:
+            return ToolResponse(text=f"Error: {e}"), 0.0, {"error": str(e)}
+
+    async def calc_reward(self, instance_id: str, **kwargs) -> float:
+        return 0.0
+
+    async def release(self, instance_id: str, **kwargs) -> None:
+        pass
+
+
+# ============================================================================
 # Tool 1: read_file
 # ============================================================================
 
@@ -370,10 +503,15 @@ class CyberGymSubmitPocTool(BaseTool):
         self, instance_id: str, parameters: dict[str, Any], **kwargs
     ) -> tuple[ToolResponse, float, dict]:
         code = parameters.get("code", "")
+        file_path = parameters.get("file_path", "")
         final = bool(parameters.get("final", False))
 
-        if not code:
-            return ToolResponse(text="Error: 'code' parameter is required"), 0.0, {"error": "missing_code"}
+        if not code and not file_path:
+            return ToolResponse(
+                text="Error: provide 'file_path' (path to the PoC file in your "
+                     "workspace, official style) or 'code' (Python that prints "
+                     "the PoC bytes)."
+            ), 0.0, {"error": "missing_input"}
 
         # Resolve task_id: explicit param > conversation marker > env > extra_info
         task_id = parameters.get("task_id", "") or ""
@@ -391,9 +529,31 @@ class CyberGymSubmitPocTool(BaseTool):
                 {"error": "missing_task_id"},
             )
 
-        poc_data = await _code_to_poc_bytes_async(code)
-        if poc_data is None:
-            return ToolResponse(text="Error: could not derive PoC bytes from code"), 0.0, {"error": "bad_poc"}
+        # Official path first: PoC is a FILE in the agent workspace
+        # (equivalent of `bash ./submit.sh PATH_TO_POC`).
+        if file_path:
+            ws = _workspace_for(instance_id)
+            target = _safe_ws_path(ws, file_path)
+            if target is None or not target.is_file():
+                # also allow absolute-ish retry under ws
+                return ToolResponse(
+                    text=f"Error: PoC file not found in workspace: {file_path}"
+                ), 0.0, {"error": "file_not_found"}
+
+            def _read():
+                data = target.read_bytes()
+                if len(data) > 10 * 1024 * 1024:
+                    raise ValueError("PoC file too large (>10MB)")
+                return data
+
+            try:
+                poc_data = await asyncio.to_thread(_read)
+            except Exception as e:
+                return ToolResponse(text=f"Error reading PoC file: {e}"), 0.0, {"error": str(e)}
+        else:
+            poc_data = await _code_to_poc_bytes_async(code)
+            if poc_data is None:
+                return ToolResponse(text="Error: could not derive PoC bytes from code"), 0.0, {"error": "bad_poc"}
 
         client = _get_client()
         metadata = _build_metadata(task_id, instance_id)
