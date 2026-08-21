@@ -8,7 +8,7 @@
 # Usage: Set rollout.multi_turn.tool_config_path to this file in training config
 
 tools:
-  - class_name: "verl_integration.cybergym_tools_verl.CyberGymReadFileTool"
+  - class_name: "cybergym_integration.verl_integration.cybergym_tools_verl.CyberGymReadFileTool"
     config:
       type: native
       task_dir: "/tmp/cybergym_tasks"  # Can be overridden by CYBERGYM_TASK_DIR env var
@@ -26,7 +26,7 @@ tools:
           required:
             - "path"
 
-  - class_name: "verl_integration.cybergym_tools_verl.CyberGymSubmitPocTool"
+  - class_name: "cybergym_integration.verl_integration.cybergym_tools_verl.CyberGymSubmitPocTool"
     config:
       type: native
       server_url: "http://localhost:8666"  # Can be overridden by CYBERGYM_SERVER_URL env var
@@ -49,7 +49,7 @@ tools:
           required:
             - "code"
 
-  - class_name: "verl_integration.cybergym_tools_verl.CyberGymExecuteCodeTool"
+  - class_name: "cybergym_integration.verl_integration.cybergym_tools_verl.CyberGymExecuteCodeTool"
     config:
       type: native
       timeout: 10  # Maximum execution time in seconds
