@@ -308,13 +308,23 @@ class CyberGymReadFileTool(BaseTool):
         if not path:
             return ToolResponse(text="Error: 'path' parameter is required"), 0.0, {"error": "missing_path"}
 
+        # Task-aware routing: each trajectory reads from its own task dir
+        # (/tmp/cybergym_tasks/<task_id>/...), resolved from the conversation
+        # marker. Falls back to the flat task_dir for shared files.
+        task_id = ""
+        agent_data = kwargs.get("agent_data")
+        messages = getattr(agent_data, "messages", None) if agent_data else None
+        if messages:
+            task_id = extract_task_id_from_messages(messages)
+        base = Path(self.task_dir) / task_id if task_id else Path(self.task_dir)
+
         def _read() -> str:
-            full = Path(self.task_dir) / path
+            full = base / path
+            if not full.exists() and task_id:
+                full = Path(self.task_dir) / path  # shared-file fallback
             if not full.exists():
                 available = (
-                    [f.name for f in Path(self.task_dir).iterdir() if f.is_file()]
-                    if Path(self.task_dir).exists()
-                    else []
+                    [f.name for f in base.iterdir() if f.is_file()] if base.exists() else []
                 )
                 return f"File not found: {path}\nAvailable files: {', '.join(available)}"
             content = full.read_text(encoding="utf-8", errors="replace")
