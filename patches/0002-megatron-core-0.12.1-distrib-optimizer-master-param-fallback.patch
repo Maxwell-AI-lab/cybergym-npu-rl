@@ -1,0 +1,38 @@
+--- /tmp/cluster_export/distrib_optimizer_orig.py	2026-08-21 13:49:56
++++ /tmp/cluster_export/distrib_optimizer.py	2026-08-21 13:47:17
+@@ -564,8 +564,18 @@
+         )
+ 
+         if isinstance(self.optimizer, HybridDeviceOptimizer):
++            params_list = [g["orig_group"] for g in self.opt_group_ranges]
++            # Fix: ensure all params are leaf tensors (convert slices to contiguous)
++            for pg in params_list:
++                params = pg.get('params', pg.get('param', []))
++                if isinstance(params, list):
++                    for i, p in enumerate(params):
++                        if hasattr(p, 'is_leaf') and not p.is_leaf:
++                            # Make a proper leaf tensor from the slice
++                            leaf_p = p.clone().detach().requires_grad_(p.requires_grad)
++                            params[i] = leaf_p
+             self.optimizer = HybridDeviceOptimizer(
+-                params=[g["orig_group"] for g in self.opt_group_ranges], **self.optimizer.defaults
++                params=params_list, **self.optimizer.defaults
+             )
+         else:
+             self.optimizer.param_groups = [g["orig_group"] for g in self.opt_group_ranges]
+@@ -823,7 +833,14 @@
+                     continue
+ 
+                 tensors[k] = self.optimizer.get_unscaled_state(sharded_model_param, k)
+-            tensors["param"] = tensors.pop("master_param")
++            if "master_param" in tensors:
++                tensors["param"] = tensors.pop("master_param")
++            else:
++                # [FIX 2026-08-20] CPU offload (HybridDeviceOptimizer) 下
++                # optimizer.state 可能尚未初始化 master_param（precision-aware
++                # 模式）；fallback 到 sharded model param，保证权重导出/状态
++                # 分发不中断（bf16 分片，与 verl 权重同步精度一致）。
++                tensors["param"] = sharded_model_param
+         else:
+             main_param = self.optimizer.param_groups[group_index]["params"][group_order]
+             optim_state = self.optimizer.state[main_param]

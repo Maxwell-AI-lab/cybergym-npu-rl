@@ -1,0 +1,46 @@
+--- server_code/vllm-ascend/vllm_ascend/models/deepseek_v4.py	2026-08-18 20:34:33
++++ /tmp/cluster_export/deepseek_v4.py	2026-08-21 13:47:17
+@@ -1366,7 +1366,35 @@
+         heads_per_rank = self.config.num_attention_heads // tp_size
+         head_start = tp_rank * heads_per_rank
+ 
++        # [LAYOUT-FIX 2026-08-20 v2] MoE 权重布局适配：
++        # pwal (process_weights_after_loading) 把 vLLM 参数转成 kernel 布局
++        #   w2:  vllm [8,4096,2048] ([hidden,inter]) -> kernel [8,2048,4096] ([inter,hidden])
++        #   w13: [8,4096,4096] 方形（内容转置，shape 不变）
++        # 训练侧/Megatron 传来的权重为 [out,in] 布局（w2=[4096,2048], w1/w3=[2048,4096]），
++        # 与 kernel 布局参数不一致 -> 需要转置；与 vllm 布局参数一致 -> 不转置。
++        # 判断依据：vLLM 当前 w2 参数的实际布局（而非名字——HF 与训练侧同名 .wN.）
++        _is_kernel_moe = False
++        try:
++            _exp = self.model.layers[2].mlp.experts
++            _exp = getattr(_exp, "routed_experts", _exp)
++            _w2 = getattr(_exp, "w2_weight", None)
++            if _w2 is not None and _w2.ndim == 3:
++                _is_kernel_moe = _w2.shape[1] < _w2.shape[2]  # kernel [.,2048,4096] vs vllm [.,4096,2048]
++        except Exception as _e:
++            print(f"[ISK-DBG] err: {_e}", flush=True)
++        # [LAYOUT-FIX v3 2026-08-20] 若 vLLM 参数仍处于 pwal 的 kernel 布局
++        # (w2 [.,2048,4096] / w13 [.,4096,4096] 内容转置), 先转回 vllm 布局,
++        # 保证 vLLM weight_loader 的 shard_dim/narrow 语义正确.
++        # 与 utils.py 的逆转置互补: 无论逆转置是否生效, 这里都兜底.
++        if _is_kernel_moe:
++            for _n, _p in list(self.named_parameters()):
++                if _n.endswith(("w13_weight", "w2_weight")) and _p.ndim == 3:
++                    _p.data = _p.data.transpose(1, 2).contiguous()
++            _is_kernel_moe = False
++            print("[ISK-DBG] reverted params to vllm layout", flush=True)
+         for name, loaded_weight in weights:
++            if _is_kernel_moe and (".w1." in name or ".w2." in name or ".w3." in name) and loaded_weight.ndim == 2:
++                loaded_weight = loaded_weight.transpose(0, 1)
+             spec_layer = get_spec_layer_idx_from_weight_name(self.config, name)
+             if spec_layer is not None:
+                 continue  # skip spec decode layers for main model
+@@ -1522,6 +1550,7 @@
+                             def weight_loader(p, w, *args, **kwargs):
+                                 default_weight_loader(p, w)
+                                 return True
++                        print(f"[WL-DBG] isk={_is_kernel_moe} {name_mapped} eid={expert_id} shard={shard_id} w={tuple(weight_to_load.shape)}", flush=True)
+                         success = weight_loader(
+                             param,
+                             weight_to_load,
