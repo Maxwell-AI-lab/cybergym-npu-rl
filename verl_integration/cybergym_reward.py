@@ -209,10 +209,15 @@ def compute_score(
     if extra_info and "task_id" in extra_info:
         task_id = extra_info["task_id"]
 
-    # [REWARD-DBG] 打印模型输出头部，用于确认轨迹质量/乱码
+    # [REWARD-DBG] 打印轨迹头部 + 多轮诊断信息（长度/工具结果/代码块/尾部）
     num_turns = kwargs.get("__num_turns__", "N/A")
     print(
-        f"[REWARD-DBG] task={task_id} turns={num_turns} head={solution_str[:300]!r}",
+        f"[REWARD-DBG] task={task_id} turns={num_turns} len={len(solution_str)} "
+        f"has_tool_result={'<tool_result>' in solution_str} "
+        f"has_dsml={'DSML' in solution_str} "
+        f"has_xml_call='<invoke_name>' in solution_str "
+        f"has_py_block={'```python' in solution_str} "
+        f"head={solution_str[:200]!r} tail={solution_str[-200:]!r}",
         flush=True,
     )
 
