@@ -51,6 +51,20 @@ TASK_ID_PATTERN = re.compile(r"(arvo|oss-fuzz):\d+")
 # --- Shared async HTTP client (connection pooling across tool calls) ---
 _client: Optional[httpx.AsyncClient] = None
 
+# Cap concurrent CyberGym submissions (= concurrent docker containers on x86,
+# since vul/fix run sequentially per submission). Steady-state load is <1,
+# but correlated trajectories can burst; 16 keeps the 32C/64GB x86 box
+# comfortable (S4 verified 32 concurrent at p99=1.87s).
+_submit_semaphore: Optional[asyncio.Semaphore] = None
+CYBERGYM_MAX_CONCURRENT = int(os.environ.get("CYBERGYM_MAX_CONCURRENT", "16"))
+
+
+def _get_semaphore() -> asyncio.Semaphore:
+    global _submit_semaphore
+    if _submit_semaphore is None:
+        _submit_semaphore = asyncio.Semaphore(CYBERGYM_MAX_CONCURRENT)
+    return _submit_semaphore
+
 
 def _get_client() -> httpx.AsyncClient:
     """Lazily create a process-wide AsyncClient bound to the running loop."""
@@ -155,9 +169,23 @@ async def _submit_async(
 ) -> dict:
     """POST to /submit-{vul,fix} with retry + exponential backoff.
 
+    Concurrency-capped: each in-flight submission equals one docker
+    container on the x86 box, so the semaphore bounds peak containers.
+
     Returns {"exit_code": int, "output": str, "poc_id": str|None}.
     exit_code == -1 means infrastructure error (never penalize the model).
     """
+    sem = _get_semaphore()
+    async with sem:
+        return await _submit_async_inner(client, mode, metadata, poc_data)
+
+
+async def _submit_async_inner(
+    client: httpx.AsyncClient,
+    mode: str,
+    metadata: str,
+    poc_data: bytes,
+) -> dict:
     endpoint = f"{CYBERGYM_SERVER_URL}/submit-{mode}"
     headers = {"X-API-Key": CYBERGYM_API_KEY} if mode == "fix" else {}
 
