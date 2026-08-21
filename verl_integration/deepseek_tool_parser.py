@@ -60,7 +60,7 @@ class DeepSeekToolParser(ToolParser):
 
     def __init__(self, tokenizer) -> None:
         super().__init__(tokenizer)
-        # One call: <｜tool▁call▁begin｜>function<｜tool▁sep｜>NAME\n```json\nARGS\n```
+        # Dialect 1 (native): <｜tool▁call▁begin｜>function<｜tool▁sep｜>NAME\n```json\nARGS\n```
         self.call_regex = regex.compile(
             regex.escape(CALL_BEGIN)
             + r"function"
@@ -68,11 +68,37 @@ class DeepSeekToolParser(ToolParser):
             + r"([^\n`]+?)\s*```(?:json)?\s*\n(.*?)\n?```",
             regex.DOTALL,
         )
-        # Whole block including markers (removed from content).
         self.block_regex = regex.compile(
             regex.escape(CALLS_BEGIN) + r".*?" + regex.escape(CALLS_END),
             regex.DOTALL,
         )
+        # Dialect 2 (XML, observed in S5 run 2026-08-21):
+        #   <tool_call><invoke_name>NAME</invoke_name><parameters><k>v</k>...</parameters></tool_call>
+        # The model was pretrained with this dialect and emits it even when
+        # native-format examples are shown in the system prompt.
+        self.xml_regex = regex.compile(
+            r"<tool_call>\s*<invoke_name>([^<]+)</invoke_name>"
+            r"\s*<parameters>(.*?)</parameters>\s*</tool_call>",
+            regex.DOTALL,
+        )
+        self.xml_block_regex = regex.compile(
+            r"<tool_call>\s*<invoke_name>.*?</parameters>\s*</tool_call>",
+            regex.DOTALL,
+        )
+        self.param_regex = regex.compile(r"<(\w+)>(.*?)</\1>", regex.DOTALL)
+
+    def _xml_params_to_json(self, params_xml: str) -> str:
+        """Convert XML <k>v</k> parameters to a JSON arguments string."""
+        args: dict = {}
+        for key, value in self.param_regex.findall(params_xml):
+            value = value.strip()
+            if value.lower() == "true":
+                args[key] = True
+            elif value.lower() == "false":
+                args[key] = False
+            else:
+                args[key] = value
+        return json.dumps(args, ensure_ascii=False)
 
     @rollout_trace_op
     async def extract_tool_calls(
@@ -82,28 +108,37 @@ class DeepSeekToolParser(ToolParser):
     ) -> tuple[str, list[FunctionCall]]:
         loop = get_event_loop()
 
-        # Special tokens must be preserved to see the tool markers.
+        # Special tokens must be preserved to see the native markers.
         raw = await loop.run_in_executor(
             None, lambda: self.tokenizer.decode(responses_ids, skip_special_tokens=False)
         )
 
-        if CALLS_BEGIN not in raw or CALL_BEGIN not in raw:
-            # No tool call — return clean text (special tokens stripped).
+        function_calls: list[FunctionCall] = []
+
+        # Dialect 1: native special-token markers.
+        if CALLS_BEGIN in raw and CALL_BEGIN in raw:
+            for block in self.block_regex.findall(raw):
+                for name, args in self.call_regex.findall(block):
+                    name, args = name.strip(), args.strip()
+                    try:
+                        json.loads(args)  # validate; keep raw string on success
+                        function_calls.append(FunctionCall(name=name, arguments=args))
+                    except Exception as e:
+                        logger.error(f"Failed to decode tool call {name!r}: {e}")
+
+        # Dialect 2: XML <tool_call> dialect (plain text, survives decode).
+        for name, params_xml in self.xml_regex.findall(raw):
+            function_calls.append(
+                FunctionCall(name=name.strip(), arguments=self._xml_params_to_json(params_xml))
+            )
+
+        if not function_calls:
             text = await loop.run_in_executor(None, lambda: self.tokenizer.decode(responses_ids))
             return text, []
 
-        function_calls: list[FunctionCall] = []
-        for block in self.block_regex.findall(raw):
-            for name, args in self.call_regex.findall(block):
-                name, args = name.strip(), args.strip()
-                try:
-                    json.loads(args)  # validate; keep raw string on success
-                    function_calls.append(FunctionCall(name=name, arguments=args))
-                except Exception as e:
-                    logger.error(f"Failed to decode tool call {name!r}: {e}")
-
-        # Content for downstream consumers: strip tool blocks + special tokens.
+        # Content for downstream consumers: strip both dialects + special tokens.
         no_blocks = self.block_regex.sub("", raw)
+        no_blocks = self.xml_block_regex.sub("", no_blocks)
         content = await loop.run_in_executor(
             None, lambda: self.tokenizer.decode(
                 self.tokenizer.encode(no_blocks, add_special_tokens=False)
