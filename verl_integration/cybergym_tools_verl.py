@@ -56,7 +56,7 @@ _client: Optional[httpx.AsyncClient] = None
 # but correlated trajectories can burst; 16 keeps the 32C/64GB x86 box
 # comfortable (S4 verified 32 concurrent at p99=1.87s).
 _submit_semaphore: Optional[asyncio.Semaphore] = None
-CYBERGYM_MAX_CONCURRENT = int(os.environ.get("CYBERGYM_MAX_CONCURRENT", "16"))
+CYBERGYM_MAX_CONCURRENT = int(os.environ.get("CYBERGYM_MAX_CONCURRENT", "32"))
 
 
 def _get_semaphore() -> asyncio.Semaphore:
