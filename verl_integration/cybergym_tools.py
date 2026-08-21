@@ -20,7 +20,7 @@ from pathlib import Path
 import httpx
 
 CYBERGYM_SERVER_URL = os.environ.get(
-    "CYBERGYM_SERVER_URL", "http://localhost:8666"
+    "CYBERGYM_SERVER_URL", "http://192.168.0.100:8666"
 )
 CYBERGYM_API_KEY = os.environ.get(
     "CYBERGYM_API_KEY", "cybergym-030a0cd7-5908-4862-8ab9-91f2bfc7b56d"

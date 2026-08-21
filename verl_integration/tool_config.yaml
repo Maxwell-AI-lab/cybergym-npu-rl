@@ -29,7 +29,7 @@ tools:
   - class_name: "cybergym_integration.verl_integration.cybergym_tools_verl.CyberGymSubmitPocTool"
     config:
       type: native
-      server_url: "http://localhost:8666"  # Can be overridden by CYBERGYM_SERVER_URL env var
+      server_url: "http://192.168.0.100:8666"  # Can be overridden by CYBERGYM_SERVER_URL env var
       api_key: "cybergym-030a0cd7-5908-4862-8ab9-91f2bfc7b56d"  # Can be overridden by CYBERGYM_API_KEY env var
     tool_schema:
       type: "function"
