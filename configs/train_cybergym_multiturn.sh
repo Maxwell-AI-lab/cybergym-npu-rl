@@ -124,8 +124,8 @@ MULTI_TURN_CONFIG=(
 
 # Agent loop 选择: verl 原生 tool_agent (状态机内置)
 AGENT_LOOP_CONFIG=(
-    +agent.default_agent_loop="tool_agent"
-    +agent.num_workers=8
+    actor_rollout_ref.rollout.agent.default_agent_loop="tool_agent"
+    actor_rollout_ref.rollout.agent.num_workers=8
 )
 
 DATA_CONFIG=(
