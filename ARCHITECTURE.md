@@ -269,3 +269,34 @@ reward 写在最后一个有效 token 的位置（整条轨迹一个分）
 ```
 
 > 部署要点：rollout 节点必须同时有 `cybergym_tools_verl.py` 和 `tool_config.yaml`（工具在 rollout 侧的 worker 进程内执行）；替换文件后必须清 `__pycache__`（12 节点同步踩过坑）。
+
+---
+
+## 附录：chat template 在多轮流程中的参与点（实测版）
+
+template 只负责**输入侧编码**（messages → token），不参与模型输出。多轮中**每轮重跑一次**，取增量 token 追加：
+
+```
+轮次         模板参与                    产出
+─────────────────────────────────────────────────────────────
+Turn 0 初始   ★ apply_chat_template     prompt_ids (mask=0)
+              ([system,user])
+Turn 1 生成   ✗ vLLM 自由生成            response_ids (mask=1)
+             ✗ Parser 解析工具调用       (skip_special_tokens=False)
+             ✗ 工具执行                  ToolResponse
+回填         ★ apply_chat_template     增量 token (mask=0)
+              (完整 messages 含 tool 角色)  ↑ 模板渲染 <tool_result>
+Turn 2 生成   ✗ vLLM 生成               ...循环
+─────────────────────────────────────────────────────────────
+Reward/训练   ✗ decode 拼接 + mask 过滤   loss 只对 mask=1
+```
+
+实测渲染结果（DS4-Flash 部署版模板）：
+- system：渲染（前缀拼接在首个 `<｜User｜>` 前）✓
+- user：`<｜User｜>{content}<｜Assistant｜><think>` ✓
+- tool 角色：`<｜User｜><tool_result>{content}</tool_result><｜Assistant｜><think>` ✓
+- **tools 参数：被模板忽略**（带不带渲染结果一样）✗ → 工具定义只能靠 system prompt 文本
+
+两个由此产生的坑（已在 S5 修复）：
+1. 模型输出方言（XML）与模板无关，parser 需按模型 SFT 行为适配（三方言）
+2. verl L268 用 skip_special_tokens=True decode → 原生标记被剥，模型输出呈"残缺官方格式"，parser 需宽松匹配
