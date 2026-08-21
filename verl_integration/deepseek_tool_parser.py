@@ -86,6 +86,15 @@ class DeepSeekToolParser(ToolParser):
             regex.DOTALL,
         )
         self.param_regex = regex.compile(r"<(\w+)>(.*?)</\1>", regex.DOTALL)
+        # Dialect 3 (lenient fallback, observed in S5-r2): the model imitates
+        # the native structure WITHOUT the special-token markers:
+        #   [ⅠⅠⅠ]function NAME[。]\n```json\n{"path": ...}\n```
+        # Requiring the json fence right after the name keeps false positives
+        # (prose mentioning "function read_file") out.
+        self.lenient_regex = regex.compile(
+            r"function[^\na-zA-Z]{0,6}\s*([a-z_]+)\s*[。.]?\s*```(?:json)?\s*\n(\{.*?\})\s*\n?```",
+            regex.DOTALL,
+        )
 
     def _xml_params_to_json(self, params_xml: str) -> str:
         """Convert XML <k>v</k> parameters to a JSON arguments string."""
@@ -131,6 +140,15 @@ class DeepSeekToolParser(ToolParser):
             function_calls.append(
                 FunctionCall(name=name.strip(), arguments=self._xml_params_to_json(params_xml))
             )
+
+        # Dialect 3: lenient — markerless "function NAME" + json fence.
+        if not function_calls:
+            for name, args_json in self.lenient_regex.findall(raw):
+                try:
+                    json.loads(args_json)
+                    function_calls.append(FunctionCall(name=name.strip(), arguments=args_json))
+                except Exception as e:
+                    logger.error(f"Lenient parse failed for {name!r}: {e}")
 
         if not function_calls:
             text = await loop.run_in_executor(None, lambda: self.tokenizer.decode(responses_ids))
