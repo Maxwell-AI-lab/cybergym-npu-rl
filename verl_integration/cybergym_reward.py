@@ -18,6 +18,7 @@ Architecture:
 """
 
 import hashlib
+import json
 import os
 import re
 import tempfile
@@ -27,6 +28,30 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 
 import httpx
+
+# Full-trajectory dump directory (shared storage, one JSON per trajectory).
+TRAJ_DIR = os.environ.get("CYBERGYM_TRAJ_DIR", "/data/z00666713/deepseek0715/trajectories")
+
+
+def dump_trajectory(task_id: str, score: float, solution_str: str, details: dict) -> None:
+    """Persist the full trajectory for offline analysis. Best-effort: never
+    raises into the reward path. One file per trajectory avoids NFS write
+    contention between RewardLoopWorkers on different nodes."""
+    try:
+        os.makedirs(TRAJ_DIR, exist_ok=True)
+        rec = {
+            "ts": time.time(),
+            "task_id": task_id,
+            "score": score,
+            "len_chars": len(solution_str),
+            "solution_str": solution_str,
+            **{k: v for k, v in details.items() if k != "submit_error"},
+        }
+        fname = f"{TRAJ_DIR}/{int(time.time()*1000)}_{task_id.replace(':', '_')}_{score:.2f}.json"
+        with open(fname, "w") as f:
+            json.dump(rec, f, ensure_ascii=False)
+    except Exception as e:
+        print(f"[TRAJ-DUMP] failed: {e}", flush=True)
 
 # --- Configuration ---
 CYBERGYM_SERVER_URL = os.environ.get(
@@ -279,6 +304,7 @@ def compute_score(
             score = 0.1 if ("```python" in solution_str or "DSML" in solution_str) else 0.0
         else:  # infra_error / unknown: never penalize for infrastructure
             score = 0.1 if "DSML" in solution_str else 0.0
+        dump_trajectory(task_id, score, solution_str, details)
         return {"score": score, **details}
 
     # --- Step 2 (fallback, single-turn style): no tool submission happened;

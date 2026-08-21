@@ -125,7 +125,7 @@ MULTI_TURN_CONFIG=(
 # Agent loop 选择: verl 原生 tool_agent (状态机内置)
 AGENT_LOOP_CONFIG=(
     actor_rollout_ref.rollout.agent.default_agent_loop="tool_agent"
-    actor_rollout_ref.rollout.agent.num_workers=8
+    actor_rollout_ref.rollout.agent.num_workers=16
 )
 
 DATA_CONFIG=(
@@ -330,7 +330,7 @@ REF_CONFIG=(
 )
 
 ROLLOUT_CONFIG=(
-    actor_rollout_ref.rollout.max_num_seqs=8
+    actor_rollout_ref.rollout.max_num_seqs=16
     actor_rollout_ref.rollout.nnodes=4
     actor_rollout_ref.rollout.n_gpus_per_node=8
     actor_rollout_ref.rollout.checkpoint_engine.backend=hccl
