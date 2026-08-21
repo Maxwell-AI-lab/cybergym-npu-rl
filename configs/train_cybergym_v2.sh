@@ -1,22 +1,18 @@
 export PYTHONUNBUFFERED=1
 #!/bin/bash
-# ============================================================
-# CyberGym RL Training Script
-# Based on train_e4_reduce.sh, adapted for CyberGym tasks
-# ============================================================
 export ASCEND_LAUNCH_BLOCKING=0
 export PYTHONFAULTHANDLER=1
 export PYTHONPATH=/workspace-verl:/workspace-verl/verl:/vllm-workspace/vllm-ascend:$PYTHONPATH
 export PYTHONPATH=/workspace-verl:/workspace-verl/verl:/vllm-workspace:/vllm-workspace/vllm-ascend:$PYTHONPATH
 export PATH=/usr/local/python3.12.13/bin:$PATH
+# ============================================================
 export HCCL_BUFFSIZE=200
 export VLLM_USE_V1=1
 export VLLM_DSA_INDEXER_MODE=int8
-export VERL_ROLLOUT_BUNDLE_CUSTOM_RESOURCES='{}'
-export VERL_TRAIN_BUNDLE_CUSTOM_RESOURCES='{}'
+export VERL_ROLLOUT_BUNDLE_CUSTOM_RESOURCES='{"rollout_node": 1e-4}'
 export HCCL_DEBUG=1 HCCL_DEBUG_FILE=/tmp/hccl_debug_$(hostname -I | awk "{print $1}").log
 export HYDRA_FULL_ERROR=1
-export PYTHONPATH=/usr/local/Ascend/cann-9.0.0/python/site-packages:/usr/local/Ascend/ascend-toolkit/latest/python/site-packages:/workspace-verl/vllm:/workspace-verl/vllm-ascend:/workspace-verl/verl:/data/z00666713/deepseek0715:$PYTHONPATH
+export PYTHONPATH=/usr/local/Ascend/cann-9.0.0/python/site-packages:/usr/local/Ascend/ascend-toolkit/latest/python/site-packages:/workspace-verl/vllm:/workspace-verl/vllm-ascend:/workspace-verl/verl:/data/z00666713/deepseek0715
 
 # --- CyberGym Server ---
 export CYBERGYM_SERVER_URL="${CYBERGYM_SERVER_URL:-http://192.168.0.100:8666}"
@@ -26,11 +22,11 @@ export CYBERGYM_SUBMIT_TIMEOUT=120
 project_name="DeepSeek-V4-Flash"
 exp_name="DeepSeek-V4-Flash-CyberGym"
 
-# ---- 硬件 ----
+# ---- 硬件 (适配910B: 8卡/节点) ----
 NNODES=${NNODES:-8}
 NPUS_PER_NODE=${NPUS_PER_NODE:-8}
 
-# ---- 路径 ----
+# ---- 路径 (CyberGym 数据集) ----
 MODEL_PATH=/data_nv1/models/DeepSeek-V4-Flash-DSpark-BF16
 RAY_DATA_HOME=${RAY_DATA_HOME:-"${HOME}/verl"}
 CKPTS_DIR=/data/z00666713/deepseek0715/checkpoints_cybergym
@@ -38,19 +34,19 @@ TRAIN_FILE=/data/dataset/cybergym/train.parquet
 TEST_FILE=/data/dataset/cybergym/test.parquet
 
 # ---- 数据长度 ----
-max_prompt_length=$((1024 * 4))        # 4K for task description + context
-max_response_length=$((1024 * 4))       # 4K for multi-turn tool interactions
+max_prompt_length=$((1024 * 1))
+max_response_length=1536
 
-# ---- Batch ----
-train_prompt_bsz=8                     # ≤9 tasks, avoid repetition
+# ---- Batch (CyberGym: 9 prompts, need bsz*n >= 64 NPUs) ----
+train_prompt_bsz=8
 train_prompt_mini_bsz=8
-n_resp_per_prompt=8                    # 8 rollouts per prompt (need bsz*n >= 64 NPUs)
+n_resp_per_prompt=8          # 8*8=64 = n_gpus
 
 # ---- 算法 ----
 adv_estimator=grpo
 use_kl_in_reward=False
 kl_coef=0.0
-use_kl_loss=True
+use_kl_loss=False
 kl_loss_coef=0.001
 
 # ---- 显存管理 ----
@@ -59,21 +55,22 @@ use_dynamic_bsz=False
 actor_ppo_max_token_len=$(((max_prompt_length + max_response_length)))
 infer_ppo_max_token_len=$(((max_prompt_length + max_response_length)))
 
-# ---- 并行策略 ----
-train_tp=4
-train_ep=32
+# ---- 并行策略 (适配64卡) ----
+train_tp=4                   # 不变
+train_ep=32                  # 原64 → 32  (256experts/32=8/NPU)
 train_etp=1
-train_pp=2
+train_pp=2                   # 不变
 train_cp=1
 
 # ---- 推理并行 ----
-gen_tp=8
-gen_dp=4
-gen_ep=32
-gpu_memory_utilization=0.72
+gen_tp=8                     # 不变
+gen_dp=4                     # 4推理节点恢复
+gen_ep=32                   # 单节点内部: EP=TP8*DP4=8(每DP组)
+gpu_memory_utilization=0.72  # 独立推理节点无训练争抢
 max_model_len=$((max_prompt_length + max_response_length))
+max_num_batched_tokens=0
 
-# ---- Reward function path ----
+# ---- Reward function path (CyberGym) ----
 REWARD_FN_PATH="/data/z00666713/deepseek0715/cybergym_integration/verl_integration/cybergym_reward.py"
 
 DATA_CONFIG=(
@@ -152,7 +149,7 @@ ACTOR_CONFIG=(
     +actor_rollout_ref.actor.mindspeed.llm_kwargs.rope_factor=16
     +actor_rollout_ref.actor.mindspeed.llm_kwargs.compress_rope_theta=160000.0
     +actor_rollout_ref.actor.mindspeed.llm_kwargs.max_batch_size=4
-    +actor_rollout_ref.actor.mindspeed.llm_kwargs.compress_ratios="[0,0,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4]"
+        +actor_rollout_ref.actor.mindspeed.llm_kwargs.compress_ratios="[0,0,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4]"
     +actor_rollout_ref.actor.mindspeed.llm_kwargs.moe_grouped_gemm=False
     +actor_rollout_ref.actor.mindspeed.llm_kwargs.moe_permutation_async_comm=True
     +actor_rollout_ref.actor.mindspeed.llm_kwargs.moe_token_dispatcher_type=alltoall
@@ -197,9 +194,10 @@ ACTOR_CONFIG=(
     +actor_rollout_ref.actor.mindspeed.llm_kwargs.use_flash_attn=True
     +actor_rollout_ref.actor.mindspeed.llm_kwargs.use_mcore_models=True
     +actor_rollout_ref.actor.mindspeed.llm_kwargs.num_layers=43
-    +actor_rollout_ref.actor.mindspeed.llm_kwargs.accumulate_allreduce_grads_in_fp32=True
-    +actor_rollout_ref.actor.mindspeed.llm_kwargs.main_grads_dtype=fp32
+    +actor_rollout_ref.actor.mindspeed.llm_kwargs.accumulate_allreduce_grads_in_fp32=False \
+    +actor_rollout_ref.actor.mindspeed.llm_kwargs.main_grads_dtype=bf16 \
     +actor_rollout_ref.actor.mindspeed.llm_kwargs.num_layer_list="\"21,22\""
+
     +actor_rollout_ref.actor.mindspeed.llm_kwargs.hidden_size=4096
     +actor_rollout_ref.actor.mindspeed.llm_kwargs.num_attention_heads=64
     +actor_rollout_ref.actor.mindspeed.llm_kwargs.tokenizer_type=PretrainedFromHF
@@ -282,6 +280,8 @@ ROLLOUT_CONFIG=(
     actor_rollout_ref.rollout.n_gpus_per_node=8
     actor_rollout_ref.rollout.checkpoint_engine.backend=hccl
     actor_rollout_ref.rollout.checkpoint_engine.custom_backend_module=verl.checkpoint_engine.hccl_checkpoint_engine
+    
+    
     +actor_rollout_ref.rollout.engine_kwargs.vllm.enable_sleep_mode=False
     +actor_rollout_ref.rollout.engine_kwargs.vllm.enable_auto_tool_choice=False
     actor_rollout_ref.rollout.max_model_len=${max_model_len}
@@ -290,8 +290,8 @@ ROLLOUT_CONFIG=(
     actor_rollout_ref.rollout.load_format="safetensors"
     actor_rollout_ref.rollout.n=${n_resp_per_prompt}
     actor_rollout_ref.rollout.top_p=1.0
-    ++actor_rollout_ref.rollout.logprobs_mode=raw_logprobs
     actor_rollout_ref.rollout.top_k=-1
+    actor_rollout_ref.rollout.top_k=50
     actor_rollout_ref.rollout.temperature=1.0
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=1
     actor_rollout_ref.rollout.log_prob_use_dynamic_bsz=${use_dynamic_bsz}
@@ -308,14 +308,13 @@ ROLLOUT_CONFIG=(
     actor_rollout_ref.rollout.free_cache_engine=False
 )
 
-# --- CyberGym Reward Config ---
 REWARD_CONFIG=(
     reward.custom_reward_function.path="${REWARD_FN_PATH}"
     reward.custom_reward_function.name="compute_score"
 )
 
 TRAINER_CONFIG=(
-    trainer.logger="[\"console\",\"tensorboard\"]"
+    trainer.logger="[\"console\"]"
     trainer.project_name="${project_name}"
     trainer.experiment_name="${exp_name}"
     trainer.nnodes="${NNODES}"
@@ -323,8 +322,8 @@ TRAINER_CONFIG=(
     trainer.device="npu"
     trainer.total_epochs=1
     trainer.val_before_train=False
-    trainer.test_freq=10
-    trainer.save_freq=10
+    trainer.test_freq=-1
+    trainer.save_freq=0
     trainer.default_local_dir="${CKPTS_DIR}"
     trainer.use_legacy_worker_impl=disable
 )

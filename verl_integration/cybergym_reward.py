@@ -179,15 +179,28 @@ def compute_score(
     extra_info: Optional[dict] = None,
     **kwargs,
 ) -> dict:
-    """CyberGym reward function for verl.
+    """CyberGym reward function for verl (支持单轮和多轮).
 
     This function is called by verl's NaiveRewardManager for each sample.
+    
+    **Multi-turn support**:
+    When multi_turn is enabled, solution_str contains the full trajectory:
+    - Multiple assistant turns (LLM outputs)
+    - Tool calls and tool responses
+    - The final PoC is extracted from the last submit_poc tool call
+    
+    The reward function:
+    1. Extracts the LAST Python code block (final PoC)
+    2. Submits to CyberGym for validation
+    3. Returns reward based on crash detection
 
     Args:
         data_source: should be "cybergym"
-        solution_str: the full LLM output text (all turns concatenated)
+        solution_str: the full LLM output text (single-turn: one response; 
+                      multi-turn: all turns concatenated with tool calls)
         ground_truth: the task_id (e.g. "arvo:10400")
         extra_info: dict with task_id, difficulty, etc.
+        **kwargs: may include multi-turn metadata (__num_turns__, tool_rewards, etc.)
 
     Returns:
         dict with "score" (float) and optional extra metrics
@@ -195,6 +208,13 @@ def compute_score(
     task_id = ground_truth
     if extra_info and "task_id" in extra_info:
         task_id = extra_info["task_id"]
+
+    # [REWARD-DBG] 打印模型输出头部，用于确认轨迹质量/乱码
+    num_turns = kwargs.get("__num_turns__", "N/A")
+    print(
+        f"[REWARD-DBG] task={task_id} turns={num_turns} head={solution_str[:300]!r}",
+        flush=True,
+    )
 
     agent_id = uuid.uuid4().hex
     score = 0.0
