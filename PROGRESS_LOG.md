@@ -148,3 +148,25 @@ OpenHands Agent (CodeActAgent) → trajproxy(:12300) → 自动发现代理(x86:
 - 任务工作区: 独立（run.py generate_task() 创建唯一 tmp_dir）
 - 源码环境: 独立副本（shutil.copy 到各自工作区）
 - 用完即毁: auto_remove=true
+
+### 4 路并发 E2E 最终结果（2026-08-22 18:10）
+
+**Agent 运行情况**:
+| Agent | 任务 | 完成轮次 |
+|-------|------|---------|
+| 0 | arvo:1065 | 9 轮 |
+| 1 | arvo:3938 | 10 轮 |
+| 2 | arvo:47101 | 9 轮 |
+| 3 | oss-fuzz:370689421 | 9 轮 |
+
+**CyberGym 提交**:
+- OpenHands Agent (UUID前缀): 多次提交，均 exit_code=0（未crash）
+- Native 训练 (poc_前缀): 多次提交，其中 poc_b1cfc2e977d7 在 
+  oss-fuzz:370689421 上获得 **exit_code=1（CRASH！）**
+
+**结论**:
+- ✅ 4 路并发基础设施完全工作
+- ✅ 容器隔离 + 源码隔离 + 轨迹隔离（与官方一致）
+- ✅ Agent 能提交 PoC 并获取 exit_code
+- ⚠️ OpenHands Agent 未能触发 crash（模型能力问题，RL训练要解决的）
+- ✅ Native 训练侧有 crash（证明 reward 信号通路正确）
