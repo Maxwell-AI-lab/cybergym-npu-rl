@@ -63,3 +63,29 @@
 - 12 节点已补 import os，v3 重启
 - 源码 x86 1368/1368 全量就位 ✅
 - OpenHands runtime 镜像 ghcr.io 拉取中
+
+### 关键突破（2026-08-22 15:40）
+
+**全链路打通验证成功**:
+```
+trajproxy(:12300) → vLLM(.17:9090, TP8/DP4/EP32 多节点)
+  → 模型生成回复 → 轨迹捕获(token级) → PostgreSQL 入库 ✓
+```
+
+**基础设施全部就绪**:
+- OpenHands 官方 runtime 镜像 (ghcr.io, 7.24GB) → x86 ✅
+- 源码 1368 任务 → x86 ✅
+- trajproxy (TITO 模式) → 运行中 ✅
+- vLLM 多节点策略端点 (:9090) → 运行中 ✅
+- CyberGym 判决 (:8666, binary模式) → 运行中 ✅
+- PostgreSQL (4张表) → 就绪 ✅
+- 官方任务工作区 (gen_task格式) → 就绪 ✅
+
+**技术攻关记录**:
+- 镜像下载: GitHub CDN 三台机器都超时 → wget 逐层断点续传成功
+- vLLM HTTP 暴露: port=0 随机 → 补丁固定 9090 + 保持节点 IP 绑定
+- trajproxy 数据库: 手动建 4 张表 (model_registry + request_metadata
+  + request_details_active + r3_blob_refs), 列类型 BIGINT[] 非 JSONB
+- 模型名匹配: trajproxy 的 model_name 需与 vLLM 的 served-model-name 一致
+
+**当前**: OpenHands 官方版从源码构建中 (pinned commit 35b381f)
