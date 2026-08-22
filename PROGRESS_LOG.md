@@ -89,3 +89,14 @@ trajproxy(:12300) → vLLM(.17:9090, TP8/DP4/EP32 多节点)
 - 模型名匹配: trajproxy 的 model_name 需与 vLLM 的 served-model-name 一致
 
 **当前**: OpenHands 官方版从源码构建中 (pinned commit 35b381f)
+
+### OpenHands E2E 调试记录（2026-08-22 16:20）
+
+**已攻克**:
+- OpenHands 官方 runtime 0.33-nikolaik 精确版本下载成功（wget 逐层 2.2GB）
+- OpenHands controller 从 pinned commit 构建成功
+- litellm provider 路由: `base_url`（非 `api_base`）字段名是关键
+- OpenHands → trajproxy: 路由打通（Anthropic → OpenAI 兼容 → trajproxy）
+- 容器启动 → agent 读取任务 → 调用 LLM 全链路走到 vLLM 连接
+
+**当前**: v6 训练重启中（vLLM 端口 9090 等 20 分钟加载完成后 E2E 自动闭环）
