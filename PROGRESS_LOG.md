@@ -216,3 +216,10 @@ OpenHands Agent (CodeActAgent) → trajproxy(:12300) → 自动发现代理(x86:
 ### 镜像归档
 - deepseek-v4-dspark:v31-openhands-t5（node50 容器 commit，含全部活补丁）
 - /data/image_archive/deepseek-v4-dspark_v31-openhands-t5.tar.gz
+
+## 2026-08-23 Phase 1/2 验证结果（v3 综合跑）
+
+- Pearson 0.957 → **0.9876**（零截断 64 批）：左截断失配确认为主要拖累因素；剩余 0.0124 归权重漂移，常驻循环中结构性消除
+- update_weights 87s → **79s**：CKSUM 调试埋点门控生效（VLLM_CKSUM_DEBUG env，默认关，12/12 节点）
+- 图模式评估结论：**DSV4 与 ACL graph 不兼容**（deepseek_v4.py:1135 前向算子不可 trace，vllm-ascend 能力缺口）；enforce_eager=True 为当前最优
+- 排雷记录：vllm_async_server.py:970 调试残留 ASCEND_LAUNCH_BLOCKING=1 硬注入（注释"定位后改回0"未执行）→ 已 12/12 改 0

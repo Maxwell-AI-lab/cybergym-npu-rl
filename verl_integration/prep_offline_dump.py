@@ -54,20 +54,28 @@ def main():
                     help="also write a stripped parquet (no token-array columns) for the RLHFDataset")
     ap.add_argument("--truncate-prompt-len", type=int, default=0,
                     help="left-truncate prompts longer than this (keep the tail, like verl's own truncation)")
+    ap.add_argument("--drop-overlong", action="store_true",
+                    help="DROP rows over --truncate-prompt-len instead of truncating (fidelity experiments: "
+                         "captured logprobs are conditioned on the original prefix)")
     args = ap.parse_args()
 
     df = pd.read_parquet(args.parquet)
     if args.truncate_prompt_len > 0:
-        n_trunc = 0
-        new_prompts = []
-        for p in df["prompt_ids"]:
-            p = list(p)
-            if len(p) > args.truncate_prompt_len:
-                p = p[len(p) - args.truncate_prompt_len:]
-                n_trunc += 1
-            new_prompts.append(p)
-        df["prompt_ids"] = new_prompts
-        print(f"left-truncated {n_trunc} prompts to <= {args.truncate_prompt_len}")
+        if args.drop_overlong:
+            before = len(df)
+            df = df[df["prompt_ids"].apply(len) <= args.truncate_prompt_len].reset_index(drop=True)
+            print(f"dropped {before - len(df)} overlong rows (> {args.truncate_prompt_len}) -> {len(df)}")
+        else:
+            n_trunc = 0
+            new_prompts = []
+            for p in df["prompt_ids"]:
+                p = list(p)
+                if len(p) > args.truncate_prompt_len:
+                    p = p[len(p) - args.truncate_prompt_len:]
+                    n_trunc += 1
+                new_prompts.append(p)
+            df["prompt_ids"] = new_prompts
+            print(f"left-truncated {n_trunc} prompts to <= {args.truncate_prompt_len}")
     if len(df) > args.gbs:
         # trim to gbs: drop zero-reward rows first, then lowest-reward, from the tail
         order = sorted(range(len(df)), key=lambda i: (df["reward"].iloc[i], -i))

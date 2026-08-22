@@ -365,7 +365,7 @@ ROLLOUT_CONFIG=(
     actor_rollout_ref.rollout.tensor_model_parallel_size=${gen_tp}
     actor_rollout_ref.rollout.data_parallel_size=${gen_dp}
     actor_rollout_ref.rollout.expert_parallel_size=${gen_ep}
-    actor_rollout_ref.rollout.enforce_eager=True
+    actor_rollout_ref.rollout.enforce_eager=True  # 图模式评估结论: DSV4+ACL graph 算子不可trace, eager为当前最优
     "+actor_rollout_ref.rollout.engine_kwargs.vllm.speculative_config={method: \"dspark\", num_speculative_tokens:5}"
     +actor_rollout_ref.rollout.engine_kwargs.vllm.compilation_config.cudagraph_mode="FULL_DECODE_ONLY"
     "+actor_rollout_ref.rollout.engine_kwargs.vllm.additional_config={enable_dsa_cp: false, enable_flashcomm1:false, enable_reduce_sample:false}"
@@ -388,7 +388,7 @@ TRAINER_CONFIG=(
     trainer.total_epochs=1
     trainer.val_before_train=False
     trainer.test_freq=-1
-    trainer.save_freq=1
+    trainer.save_freq=0
     trainer.default_local_dir="${CKPTS_DIR}"
     trainer.use_legacy_worker_impl=disable
 )
