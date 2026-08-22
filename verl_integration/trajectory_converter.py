@@ -94,14 +94,32 @@ def load_manifest(workspace_glob: str) -> list[dict]:
 
 
 def final_verdicts_for_runs(pocdb: str, runs: list[dict]) -> dict[int, tuple[str, float, dict]]:
-    """Assign every poc_record of a task to the run whose LLM window is
-    nearest, then score each run by its LAST record (official final-submission
-    metric). Returns {run_index: (label, score, detail)}.
+    """Score each run by its LAST poc_record (official final-submission metric).
+
+    Attribution order:
+    1. EXACT join on (run agent_id, task_id) — works whenever the OpenHands
+       agent used the baked submit.sh (server stores payload.agent_id verbatim).
+    2. Fallback: nearest-LLM-window assignment (legacy sessions whose
+       submissions came from external test scripts with random poc_ ids).
     """
     con = sqlite3.connect(pocdb)
     verdicts: dict[int, tuple[str, float, dict]] = {}
     by_task: dict[str, list[tuple[int, dict]]] = {}
     for idx, r in enumerate(runs):
+        # 1. exact agent_id join
+        rows = con.execute(
+            "SELECT vul_exit_code, fix_exit_code, poc_id, unixepoch(created_at) FROM poc_records "
+            "WHERE agent_id = ? AND task_id = ? ORDER BY created_at",
+            (r["agent_id"], r["task_id"]),
+        ).fetchall()
+        if rows:
+            vul, fix, poc_id, ts = rows[-1]
+            label, score = score_verdict(vul, fix)
+            verdicts[idx] = (label, score, {
+                "vul_exit_code": vul, "fix_exit_code": fix, "poc_id": poc_id,
+                "submitted_at": ts, "n_submissions": len(rows), "attribution": "agent_id_join",
+            })
+            continue
         by_task.setdefault(r["task_id"], []).append((idx, r))
     for task_id, task_runs in by_task.items():
         rows = con.execute(
@@ -133,7 +151,7 @@ def final_verdicts_for_runs(pocdb: str, runs: list[dict]) -> dict[int, tuple[str
                 label,
                 score,
                 {"vul_exit_code": vul, "fix_exit_code": fix, "poc_id": poc_id, "submitted_at": ts,
-                 "n_submissions": len(recs)},
+                 "n_submissions": len(recs), "attribution": "time_window"},
             )
     con.close()
     return verdicts

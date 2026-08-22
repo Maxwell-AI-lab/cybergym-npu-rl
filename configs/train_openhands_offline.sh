@@ -388,7 +388,7 @@ TRAINER_CONFIG=(
     trainer.total_epochs=1
     trainer.val_before_train=False
     trainer.test_freq=-1
-    trainer.save_freq=0
+    trainer.save_freq=1
     trainer.default_local_dir="${CKPTS_DIR}"
     trainer.use_legacy_worker_impl=disable
 )
