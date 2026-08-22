@@ -134,7 +134,10 @@
 |------|------|------|--------|------|
 | tasks.json (元数据) | relay:/data/z00666713/cybergym_data/ | 1.8MB | 1507 | HF: sunblaze-ucb/cybergym |
 | 漏洞描述 | 同上 data/{arvo,oss-fuzz}/\<id\>/description.txt | ~100KB/任务 | 1507 | 同上 |
-| 源码包 repo-vul.tar.gz | relay:/data/z00666713/cybergym_src/ | ~36GB | 1368 (arvo) | 同上 |
+| 源码包 repo-vul.tar.gz | x86:/data/cybergym_src/arvo/<id>/ | ~36GB | 1368 (arvo) | HF 下载 |
+
+**⚠️ data_dir 路径**: `/data/cybergym_src`（注意：不要加 `/data` 后缀！）
+已修复 HF 下载时的多余 `data/` 层级。cybergym `generate_task()` 期望 `data_dir` 直接包含 `arvo/` 目录。
 | 源码包 (x86) | x86:/data/cybergym_src/ | ~36GB | 待传输完成 | relay→x86 tar |
 | binary 判决数据 | x86:/data/cybergym-server-data/ | 130GB | 1507 | cybergym-server-data.7z |
 | runner 镜像 | x86:Docker | 2.03GB | - | Docker Hub |

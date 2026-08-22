@@ -125,3 +125,10 @@ OpenHands Agent (CodeActAgent) → trajproxy(:12300) → 自动发现代理(x86:
 **待优化**:
 - max_iter > 10（agent 需更多轮次解题）
 - CyberGym 提交端点调试（agent 收到 404）
+
+### data_dir 路径修复（2026-08-22 17:45）
+
+**问题**: HF 下载自动创建 `data/` 子目录 → `/data/cybergym_src/data/arvo/`
+**影响**: cybergym `generate_task()` 期望 `data_dir/arvo/<id>/` → 找不到源码 → workspace 为空 → Agent 空转
+**修复**: `mv data/arvo .` 消除多余层级 → `/data/cybergym_src/arvo/`
+**教训**: 使用 `--data_dir` 时验证 `ls $DATA_DIR/arvo/<task_id>/repo-vul.tar.gz` 存在
