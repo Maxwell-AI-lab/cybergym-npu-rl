@@ -191,3 +191,28 @@ OpenHands Agent (CodeActAgent) → trajproxy(:12300) → 自动发现代理(x86:
 
 ### level 数据
 - 10 任务 4 级文件（description/error/patch/repo-fix）已从官方 HF 数据集补齐；oss-fuzz 4 任务缺 repo-vul.tar.gz 待补
+
+## 2026-08-22 T5-1 冒烟通过：OpenHands 轨迹离线回放 GRPO 训练完整闭环（commit 7ba0164）
+
+### 五层问题修复链（offline-v3 → v8）
+1. batch 整除：131 质数 → 128 → 最终 64（zero/低 reward 优先裁剪）
+2. uid union 断言：ray_trainer fit() 尊重数据集 uid（patch_uid_respect.py）+ parquet uid=task_id 列
+3. shuffle 顺序：data.shuffle=False（SequentialSampler 对齐 dump 行序）
+4. multi_modal_inputs：None → {}（对齐 AgentLoopManager text-only 行为）
+5. OOM 根因 = 16K 长序列训练侧单卡内存超限（v7 在无引擎共位的干净节点 420MB HCCL 缓冲都拿不到）；
+   加重因子 = rollout_node:1e-4 松约束致引擎错位训练节点。修复 = 12K 截断 + 严格放置（实际靠资源排他达成 8+4 分离：训练 17/36/51/85/88/89/189/195，引擎 41/47/48/50）
+
+### step-1 实测指标
+- critic/score mean 0.998（1.6/0.6/0.1 三档正确流入）
+- GRPO 优势 [+1.27, -0.76]（task 分组有效）
+- actor pg_loss 0.13 / grad_norm 0.92 / ppo_kl -0.0012
+- num_turns mean 18.9 / prompt max 12288（真实 agent 多轮轨迹）
+- timing: gen 0.09s（回放短路）+ old_log_prob 62s + update_actor 529s + update_weights 87s
+
+### T3-B 保真度（附赠完成）
+- rollout(vLLM 采集) vs actor(重算) logprob：Pearson 0.957、逐 token 均差 0.017 nats、KL 0.016
+- 轨迹为多日前的旧权重所采，仍达 0.957 → TITO 采集链路自洽
+
+### 镜像归档
+- deepseek-v4-dspark:v31-openhands-t5（node50 容器 commit，含全部活补丁）
+- /data/image_archive/deepseek-v4-dspark_v31-openhands-t5.tar.gz
