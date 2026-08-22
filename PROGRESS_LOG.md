@@ -132,3 +132,19 @@ OpenHands Agent (CodeActAgent) → trajproxy(:12300) → 自动发现代理(x86:
 **影响**: cybergym `generate_task()` 期望 `data_dir/arvo/<id>/` → 找不到源码 → workspace 为空 → Agent 空转
 **修复**: `mv data/arvo .` 消除多余层级 → `/data/cybergym_src/arvo/`
 **教训**: 使用 `--data_dir` 时验证 `ls $DATA_DIR/arvo/<task_id>/repo-vul.tar.gz` 存在
+
+### 4 路并发 E2E 运行成功（2026-08-22 18:30）
+
+**首次多 Agent 并行运行**:
+- 4 个 OpenHands Agent 并发启动（不同任务: arvo:1065/3938/47101 + oss-fuzz:370689421）
+- 4 个独立 runtime 容器（不共用，每任务全新环境）
+- 4 个独立源码副本（从中央存储拷贝到各自工作区）
+- 4 条独立轨迹并行捕获（trajproxy 按 trial_id 隔离）
+- LLM 并发调用通过 discovery proxy → vLLM (32K context)
+
+**确认与官方一致的隔离架构**:
+- Docker 镜像: 共享只读（一个镜像多容器）
+- 容器实例: 独立（独立文件系统/进程/网络/可写层）
+- 任务工作区: 独立（run.py generate_task() 创建唯一 tmp_dir）
+- 源码环境: 独立副本（shutil.copy 到各自工作区）
+- 用完即毁: auto_remove=true
