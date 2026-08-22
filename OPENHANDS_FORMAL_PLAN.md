@@ -146,3 +146,59 @@ T1-T2: 今天-明天    T3: 明天晚    T4: 后天起 2 天    T5: 第 4-5 天
 1. **吞吐取舍**：step 时间 3 倍化（2.5-3h/step）是否接受？若可加机器跑 OpenHands 沙箱，并发可线性提升
 2. **任务池起步规模**：正式训练先 100-300 子集验证放量，还是直接全量 1507？
 3. **v2 native 基线**：是否继续跑完当前训练量作为对照组（不占 x86，只占集群）？
+
+---
+
+## 8. 用户决策记录（2026-08-22）
+
+| 决策项 | 内容 |
+|--------|------|
+| 并发策略 | **前期小并发起步**（4-8 沙箱），验证稳定后用户扩容硬件提并发 |
+| 任务池 | **前期小批量验证**（100 任务子集），链路稳定后放量 |
+| v2 native 基线 | **结果归档到 V2_BASELINE_REPORT.md，正式方案跑通后停掉** |
+| 质量纪律 | 全方案入文档、分步实施、完善质量保障、进展归档 GitHub |
+
+## 9. OpenHands 容器架构（内部组件）
+
+两层结构：
+- **Controller（主程序）**：事件循环 + CodeActAgent 策略 + LLM 抽象层（接 trajproxy）+ 工具调度 + 轨迹落盘。按官方示例 make build 锁 commit。
+- **Runtime 容器（沙箱）**：官方通用镜像
+  `docker.all-hands.dev/all-hands-ai/runtime:0.33-nikolaik`，内部含：
+  ① OS 基底 ② openhands-runtime 服务进程（执行 controller 发来的 bash/文件指令）
+  ③ 工具链（bash/git/python3/node/curl） ④ /workspace 工作目录
+  （任务文件挂载注入，不烧进镜像——一个镜像服务全部 1507 任务）
+
+任务注入：官方 prepare_arvo_files 生成工作区（repo-vul.tar.gz +
+description.txt + README.md + submit.sh）→ 挂载为 workspace。
+LLM 接线：config.toml 的 base_url = http://x86:12300/s/{trial_id}/v1。
+
+## 10. 质量保障体系（QA）
+
+### 10.1 逐 Phase 验收门（不达标不放行）
+
+| Phase | 验收门 |
+|-------|--------|
+| T1 | /health 200；tokenizer 加载成功；模型注册可见 |
+| T2 | 单任务端到端：agent 真实读源码、submit 到达 :8666、拿到 exit_code |
+| T3 | **保真度 <1%**（抽样 3 条用集群重算对比）；多 trial 隔离无串扰 |
+| T4 | 4 任务×8 trial 闭环：loss 正常、reward 流入、权重更新生效 |
+| T5 | 12-24 并发压测稳定；checkpoint 保存恢复正常 |
+
+### 10.2 持续质量检查（训练期常驻）
+
+1. **判决侧健康**：infra_error 比例 >5% 告警（preflight + dashboard）
+2. **轨迹完整性**：每 step 轨迹数 = 沙箱数；converter 拼接无缺段
+3. **保真度巡检**：每 N step 抽 1 条轨迹重算 logprob 对比
+4. **计分正确性**：final-submission 解析率监控（unknown 占比 <2%）
+5. **回归保护**：scripts/preflight_check.sh 启动前强制全绿
+6. **监控双端**：集群（进程/reward）+ x86（负载/容器/延迟）
+
+### 10.3 归档纪律
+
+- 每个里程碑（Phase 完成/异常/决策）记入 PROGRESS_LOG.md
+- 每次会话结束前 git commit + push 到 Maxwell-AI-lab/cybergym-npu-rl
+- 基线与正式方案数据分目录归档（V2_BASELINE_REPORT.md / 正式期报告）
+
+## 11. 进度日志
+
+见 PROGRESS_LOG.md（持续追加）。
