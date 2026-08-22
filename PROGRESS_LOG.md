@@ -100,3 +100,28 @@ trajproxy(:12300) → vLLM(.17:9090, TP8/DP4/EP32 多节点)
 - 容器启动 → agent 读取任务 → 调用 LLM 全链路走到 vLLM 连接
 
 **当前**: v6 训练重启中（vLLM 端口 9090 等 20 分钟加载完成后 E2E 自动闭环）
+
+### 🎉 OpenHands E2E 成功（2026-08-22 17:15）
+
+**完整链路首次闭环**:
+```
+OpenHands Agent (CodeActAgent) → trajproxy(:12300) → 自动发现代理(x86:9090)
+  → vLLM(.17:9090, 32K context, TP8/DP4/EP32) → 模型推理 → 回复
+  → Agent 在容器内执行命令（10轮迭代）→ submit.sh → CyberGym 判定
+```
+
+**关键修复**:
+1. `base_url` 字段名（非 `api_base`）— litellm 路由到正确端点
+2. 模型名: `openai/` 前缀 + vLLM 完整路径 — litellm 识别为 OpenAI 兼容
+3. 自动发现代理（discovery_proxy.py）— 解决 vLLM 端点随 Ray 调度漂移问题
+4. `max_model_len=32768` — 解决 OpenHands 长 prompt 超 8192 限制
+
+**Agent 行为确认**:
+- working_dir: /workspace（任务工作区正确挂载）
+- py_interpreter: /openhands/poetry/...（官方 runtime 环境正确）
+- 10 轮迭代执行（读文件、分析、运行命令）
+- 达到 max_iter 上限（需增加轮次或优化 agent 效率）
+
+**待优化**:
+- max_iter > 10（agent 需更多轮次解题）
+- CyberGym 提交端点调试（agent 收到 404）
