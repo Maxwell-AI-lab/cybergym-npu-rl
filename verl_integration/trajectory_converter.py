@@ -263,7 +263,7 @@ def main():
                         "turn": i,
                         "n_turns": len(turns),
                         "verdict": label,
-                        "verdict_detail": detail,
+                        "verdict_detail": json.dumps(detail, default=str),
                     },
                 }
             )

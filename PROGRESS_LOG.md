@@ -223,3 +223,11 @@ OpenHands Agent (CodeActAgent) → trajproxy(:12300) → 自动发现代理(x86:
 - update_weights 87s → **79s**：CKSUM 调试埋点门控生效（VLLM_CKSUM_DEBUG env，默认关，12/12 节点）
 - 图模式评估结论：**DSV4 与 ACL graph 不兼容**（deepseek_v4.py:1135 前向算子不可 trace，vllm-ascend 能力缺口）；enforce_eager=True 为当前最优
 - 排雷记录：vllm_async_server.py:970 调试残留 ASCEND_LAUNCH_BLOCKING=1 硬注入（注释"定位后改回0"未执行）→ 已 12/12 改 0
+
+## 2026-08-23 Phase 4: 常驻闭环机制验收通过
+
+- 2轮无人值守闭环: BlockingDS门控(hold 1741s→放行) + 引擎健康门控采集(4/4) + 转换 + genstep_2 + round2 + 干净退出, ERR=0
+- 修复链(ray actor env隔离/glob展开/空struct/批对齐)全部入档
+- Pearson 判定: 新鲜同权重 0.9857 ≈ 旧漂移 0.9886 → 权重漂移排除;
+  剩余嫌疑: DSpark spec-decode / top_k=50 / vLLM↔Megatron bf16 数值地板
+- 采集质量: 本轮4 agent均 no_submission(需在 Phase 5 排查)
