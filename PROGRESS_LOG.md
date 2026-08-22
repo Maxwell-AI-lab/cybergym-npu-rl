@@ -170,3 +170,24 @@ OpenHands Agent (CodeActAgent) → trajproxy(:12300) → 自动发现代理(x86:
 - ✅ Agent 能提交 PoC 并获取 exit_code
 - ⚠️ OpenHands Agent 未能触发 crash（模型能力问题，RL训练要解决的）
 - ✅ Native 训练侧有 crash（证明 reward 信号通路正确）
+
+## 2026-08-22 T3-A + T4 完成：TrajectoryConverter 闭环（commit 3fd765f）
+
+### T3-A token 对齐分析（scripts/t3_part_a_alignment.py）
+- 结论：OpenHands 会话内下一轮 prompt 的前缀与上一轮完全一致（~6900 token），但 assistant 轮是 chat 模板重渲染，模型真实输出 token 在下一轮 prompt 中 0/25 原样出现
+- 设计决策：**每轮 LLM 调用 = 一条独立训练样本**（prompt_ids + response_ids + 全 1 response_mask），轨迹级 reward 广播；免疫 OpenHands 历史压缩事件
+- T3-B（logprob 复算 <1%）待推理端点恢复后补测
+
+### T4 TrajectoryConverter（verl_integration/trajectory_converter.py）
+- 输入：trajproxy PostgreSQL（token 级）+ CyberGym poc.db（verdict）
+- reward 归属：官方 submit.sh 每次提交用随机 poc_<hex> id，改用最近 LLM 窗口分配（±600s），最终提交计分（FAQ Q3）
+- 产出：/data/dataset/openhands_traj/batch2.parquet，131 turn 样本 / 9 会话
+- 验收全过：mask 一致、logprob 覆盖 131/131（15531 位置，均值 -0.18）、会话内 reward 一致、prompt 最长 22844 < 32K
+- reward 分布：valid=1.6×30, wrong_bug=0.6×25, no_crash=0.1×50, no_submission=0×26
+
+### 修正记录
+- "通用 prompt 解不动 1065"系数据路径 bug 所致；路径修复后通用 prompt 批次 3/4 任务 valid（1065/47101/370689421），47101 曾 5 连 valid 但最终提交未崩（按官方口径计 no_crash）
+- e2e-optimized-001（优化 prompt）= wrong_bug 档；单样本不能下 prompt 优劣结论
+
+### level 数据
+- 10 任务 4 级文件（description/error/patch/repo-fix）已从官方 HF 数据集补齐；oss-fuzz 4 任务缺 repo-vul.tar.gz 待补
