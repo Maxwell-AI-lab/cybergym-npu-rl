@@ -48,3 +48,11 @@
 - DS4 tokenizer 挂载 /app/models/dsv4 ✓（PyTorch 缺失警告为 tokenizer-only 正常态）
 - 模型注册成功: deepseek-v4-flash / TITO=true / tokenizer_path 正确
 - 测试请求全链路直达后端转发（占位 URL 连接失败=预期），T2 接真 vLLM 即闭环
+
+### v3 发射（2026-08-22 10:30）
+- 用户确认发射；v3 = 多节点 rollout（TP8/DP4/EP32）同时充当:
+  ① 正式训练  ② trajproxy 的策略端点（vLLM :9090）
+- 关键修正记录: 单节点 TP8 serve 必 OOM（256 experts 需 EP=32 分散 32 卡）
+  → 用 verl 训练基础设施做策略端点是唯一正确路径
+- trajproxy 后端已更新: http://192.168.0.17:9090/v1
+- 9090 就绪监视器已挂; 就绪后执行 T2 接线验证
