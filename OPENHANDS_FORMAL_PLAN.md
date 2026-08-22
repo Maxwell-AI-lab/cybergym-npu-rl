@@ -291,3 +291,70 @@ hosts:
 | CyberGym 判决 | 永不需要 | 实测利用率 <5% |
 | PostgreSQL | 暂不需要 | 轨迹写入量小 |
 | 集群 vLLM | **真正的吞吐上限** | 沙箱扩到一定数量后，瓶颈转移到策略端点的生成吞吐（rollout NPU 可按需从训练侧调配） |
+
+---
+
+## 13. 架构对比：Native vs Formal（通信模型差异）
+
+### 13.1 为什么 native 不需要端口
+
+```
+┌─────────────── Ray 集群内部（v2/v3 native 训练）───────────────┐
+│                                                               │
+│  verl 编排器 → tool_agent_loop (Ray Actor)                     │
+│                    ↓ 进程内调用（Ray IPC）                      │
+│                vLLM 引擎（同一 Ray 生态）                       │
+│                    ↓ 进程内返回 token + logprob                │
+│                轨迹 → GRPO 更新                                 │
+│                                                               │
+│  全部在集群内部: Ray Actor 之间的方法调用，零网络开销              │
+│  不需要暴露任何端口，不需要 HTTP                                 │
+└───────────────────────────────────────────────────────────────┘
+```
+
+### 13.2 为什么正式方案必须有端口
+
+```
+┌── x86 物理机 ──────────┐          ┌── 集群（4 rollout 节点）──────┐
+│                        │          │                              │
+│  OpenHands 容器         │──HTTP──► │  trajproxy ──────HTTP──────► │ vLLM :9090
+│  (独立 Docker 进程)     │  必须    │  (捕获 token+logprob)         │ (TP8/DP4/EP32)
+│                        │  走网络  │                              │
+└────────────────────────┘          └──────────────────────────────┘
+
+核心原因: OpenHands 是 x86 上的独立 Docker 容器，不在 Ray 集群里。
+它调用 LLM 的唯一方式是 HTTP 请求（OpenAI API 格式）。
+→ vLLM 必须暴露网络端口（:9090），端口就是两个世界的桥梁。
+→ trajproxy 卡在中间拦截 HTTP 调用，捕获 token 级 logprob（训练数据）。
+```
+
+### 13.3 两种方案的完整对比
+
+| 维度 | Native（v2/v3 当前） | Formal（OpenHands + trajproxy） |
+|------|---------------------|--------------------------------|
+| Agent 运行位置 | Ray Actor 内（集群） | x86 Docker 容器（独立） |
+| LLM 调用方式 | Ray IPC（进程内） | HTTP → trajproxy → HTTP → vLLM |
+| 是否需要端口 | ❌ 不需要 | ✅ vLLM :9090 + trajproxy :12300 |
+| 轨迹捕获 | 原生（进程内天然可得） | trajproxy 拦截 HTTP 捕获 |
+| logprob 精度 | 精确（同一进程） | 依赖 trajproxy 保真度（>0.99） |
+| 沙箱隔离 | 共享进程 + 工作区目录 | 每轨迹独立 Docker 容器 |
+| 吞吐 | ~60 min/step | ~150-180 min/step |
+| 训评一致性 | 工具语义已对齐，但 harness 自建 | 完全与官方评测同构 |
+| 并发扩展 | 受限于集群 NPU | 沙箱池可横向加机器（§12） |
+| 部署复杂度 | 低（全在集群内） | 高（x86 + 集群 + 网络） |
+
+### 13.4 策略端点的正确配置（关键修正记录）
+
+```
+❌ 错误尝试: 单节点 standalone vLLM serve (TP=8)
+   → OOM: 256 MoE experts 需分散到 32 卡（EP=32），单节点 8 卡装不下
+   → 即使用 gpu-memory-utilization=0.95 + max-model-len=4096 仍然差 514MB
+
+✅ 正确方案: verl 多节点训练的 rollout 引擎 (TP8/DP4/EP32)
+   → 4 rollout 节点 × 8 NPU = 32 卡，experts 均匀分散
+   → vLLM :9090 自动暴露（OpenAI 兼容 API）
+   → 训练本身 = 策略端点（不需要单独起 serve）
+```
+
+**教训**：DeepSeek V4 Flash 的 MoE 架构（256 experts）决定了必须多节点 EP，
+任何单节点推理方案都不可行。用户原有 verl 配置（TP8/DP4/EP32）是唯一正确路径。

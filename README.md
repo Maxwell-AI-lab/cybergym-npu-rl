@@ -72,9 +72,33 @@
 
 **关键链路**：
 - OpenHands 容器 → trajproxy（容器网络 `traj-net`，trial_id 路由）
-- trajproxy → vLLM（`192.168.0.17:8000`，OpenAI 兼容）
+- trajproxy → vLLM（`192.168.0.17:9090`，OpenAI 兼容，verl rollout 端口）
 - OpenHands 容器 → CyberGym :8666（`bash ./submit.sh`，内网直连）
 - verl → trajproxy PostgreSQL（轨迹拉取，训练侧消费）
+
+### 通信模型对比（Native vs Formal）
+
+```
+Native（v2/v3）: 全部在 Ray 集群内部，Ray IPC 直通，零网络开销
+  verl → tool_agent_loop → vLLM（进程内调用）→ 轨迹 → GRPO
+
+Formal（OpenHands）: Agent 在 x86 容器里，必须走 HTTP 桥接集群
+  OpenHands 容器 ──HTTP──► trajproxy ──HTTP──► vLLM :9090（多节点 EP=32）
+  （端口是两个世界的桥梁；trajproxy 拦截捕获 token 级 logprob）
+```
+
+| 维度 | Native | Formal (OpenHands) |
+|------|--------|-------------------|
+| LLM 调用 | Ray IPC（进程内） | HTTP → trajproxy → HTTP |
+| 需要端口 | ❌ | ✅ :9090 + :12300 |
+| logprob | 原生精确 | trajproxy 捕获（>0.99 保真度） |
+| 沙箱 | 共享进程+工作区 | 每轨迹独立 Docker 容器 |
+| 吞吐 | ~60min/step | ~150-180min/step |
+| 训评一致 | 语义对齐，harness 自建 | 完全官方同构 |
+| 并发扩展 | 受集群限制 | 沙箱池可横向加机器 |
+
+> ⚠️ **模型约束**: DeepSeek V4 Flash (256 MoE experts) 必须多节点 EP=32 分散，
+> 单节点 TP8 推理必 OOM。verl 的 TP8/DP4/EP32 配置是唯一正确路径。
 
 ## 四、硬件清单
 
