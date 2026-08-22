@@ -39,3 +39,12 @@
 1. T1 完成：postgres + trajproxy 容器 health 200
 2. T2：OpenHands 构建锁定 + 单任务接线
 3. 源码合并完 → verify_source.py 四级校验 → 任务工作区生成
+
+### T1 完成（2026-08-22 09:50）
+- traj_db（postgres:16, :5433, 数据卷持久化）pg_isready ✓
+- traj_proxy（2 workers, :12300-12304）health 200 ✓
+- 踩坑: 模板 config 的 database.url 指向不存在的 `db` 主机名（name resolution
+  报错根因）→ 改指 traj_db；x86 无 compose 插件 → 裸 docker run
+- DS4 tokenizer 挂载 /app/models/dsv4 ✓（PyTorch 缺失警告为 tokenizer-only 正常态）
+- 模型注册成功: deepseek-v4-flash / TITO=true / tokenizer_path 正确
+- 测试请求全链路直达后端转发（占位 URL 连接失败=预期），T2 接真 vLLM 即闭环
