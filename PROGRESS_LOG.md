@@ -56,3 +56,10 @@
   → 用 verl 训练基础设施做策略端点是唯一正确路径
 - trajproxy 后端已更新: http://192.168.0.17:9090/v1
 - 9090 就绪监视器已挂; 就绪后执行 T2 接线验证
+
+### 端口补丁修复（2026-08-22 12:30）
+- v3 第一次启动 crash: NameError 'os' is not defined
+  → 端口补丁用了 os.environ 但忘了 import os
+- 12 节点已补 import os，v3 重启
+- 源码 x86 1368/1368 全量就位 ✅
+- OpenHands runtime 镜像 ghcr.io 拉取中
